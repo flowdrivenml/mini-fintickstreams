@@ -34,11 +34,11 @@ impl State {
 pub struct SubscribeAttemptLimiter {
     cfg: AttemptLimiterConfig,
     state: Arc<Mutex<State>>,
-    metrics: Option<IngestMetrics>,
+    metrics: Option<Arc<IngestMetrics>>,
 }
 
 impl SubscribeAttemptLimiter {
-    pub fn new(cfg: AttemptLimiterConfig, metrics: Option<IngestMetrics>) -> Self {
+    pub fn new(cfg: AttemptLimiterConfig, metrics: Option<Arc<IngestMetrics>>) -> Self {
         Self {
             cfg,
             state: Arc::new(Mutex::new(State::new_now())),
@@ -103,11 +103,11 @@ impl SubscribeAttemptLimiter {
 pub struct ReconnectAttemptLimiter {
     cfg: AttemptLimiterConfig,
     state: Arc<Mutex<State>>,
-    metrics: Option<IngestMetrics>,
+    metrics: Option<Arc<IngestMetrics>>,
 }
 
 impl ReconnectAttemptLimiter {
-    pub fn new(cfg: AttemptLimiterConfig, metrics: Option<IngestMetrics>) -> Self {
+    pub fn new(cfg: AttemptLimiterConfig, metrics: Option<Arc<IngestMetrics>>) -> Self {
         Self {
             cfg,
             state: Arc::new(Mutex::new(State::new_now())),
@@ -169,7 +169,7 @@ impl ReconnectAttemptLimiter {
 /// Builder: subscribe limiter from ExchangeConfig.
 pub fn build_ws_subscribe_limiter(
     cfg: &ExchangeConfig,
-    metrics: Option<IngestMetrics>,
+    metrics: Option<Arc<IngestMetrics>>,
 ) -> SubscribeAttemptLimiter {
     SubscribeAttemptLimiter::new(
         AttemptLimiterConfig {
@@ -183,7 +183,7 @@ pub fn build_ws_subscribe_limiter(
 /// Builder: reconnect limiter from ExchangeConfig.
 pub fn build_ws_reconnect_limiter(
     cfg: &ExchangeConfig,
-    metrics: Option<IngestMetrics>,
+    metrics: Option<Arc<IngestMetrics>>,
 ) -> ReconnectAttemptLimiter {
     ReconnectAttemptLimiter::new(
         AttemptLimiterConfig {

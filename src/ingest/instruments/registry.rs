@@ -165,12 +165,20 @@ impl InstrumentRegistry {
             .map(|i| &self.specs[i])
     }
 
+    pub fn by_exchange_vec(&self, exchange: &str) -> Vec<InstrumentSpec> {
+        self.by_exchange(exchange).cloned().collect()
+    }
+
     pub fn by_kind(&self, kind: InstrumentKind) -> impl Iterator<Item = &InstrumentSpec> + '_ {
         self.by_kind
             .get(&kind)
             .into_iter()
             .flat_map(|ids| ids.iter().copied())
             .map(|i| &self.specs[i])
+    }
+
+    pub fn by_kind_vec(&self, kind: InstrumentKind) -> Vec<InstrumentSpec> {
+        self.by_kind(kind).cloned().collect()
     }
 
     pub fn by_exchange_kind(
@@ -183,6 +191,31 @@ impl InstrumentRegistry {
             .into_iter()
             .flat_map(|ids| ids.iter().copied())
             .map(|i| &self.specs[i])
+    }
+
+    pub fn by_exchange_kind_vec(
+        &self,
+        exchange: &str,
+        kind: InstrumentKind,
+    ) -> Vec<InstrumentSpec> {
+        self.by_exchange_kind(exchange, kind).cloned().collect()
+    }
+
+    #[inline]
+    pub fn exists(&self, exchange: &str, symbol: &str) -> bool {
+        self.get(exchange, symbol).is_some()
+    }
+
+    /// Verify existence, returning an error if missing (useful for request validation paths)
+    #[inline]
+    pub fn verify_exists(&self, exchange: &str, symbol: &str) -> AppResult<()> {
+        if self.exists(exchange, symbol) {
+            Ok(())
+        } else {
+            Err(AppError::Internal(format!(
+                "instrument not found: exchange='{exchange}' symbol='{symbol}'"
+            )))
+        }
     }
 
     /// Deterministic counts: exchange -> kind -> count
@@ -266,7 +299,7 @@ impl InstrumentRegistry {
 mod tests {
     use super::*;
 
-    use crate::appconfig::load_app_config;
+    use crate::app::config::load_app_config;
     use crate::error::AppResult;
     use crate::ingest::config::ExchangeConfigs;
     use crate::ingest::instruments::loader::InstrumentSpecLoader;
@@ -390,4 +423,3 @@ mod tests {
         Ok(())
     }
 }
-

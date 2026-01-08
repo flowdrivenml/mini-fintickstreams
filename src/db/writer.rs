@@ -16,6 +16,7 @@
 //!     batch.rows.push(row);
 //!     db.write_batch(&mut batch).await?;
 
+use crate::db::Batch;
 use crate::db::config::WriterConfig;
 use crate::db::metrics::DbMetrics;
 use crate::db::pools::DbPools;
@@ -26,43 +27,17 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Semaphore;
 
-/// Key used for sharding + dynamic table selection.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct BatchKey {
-    pub exchange: String,
-    pub stream: String,
-    pub symbol: String,
-}
-
-/// A batch with an enqueue timestamp so we can track flush delay.
-#[derive(Debug, Clone)]
-pub struct Batch<T> {
-    pub key: BatchKey,
-    pub enqueued_at: Instant,
-    pub rows: Vec<T>,
-}
-
-impl<T> Batch<T> {
-    pub fn new(key: BatchKey, rows: Vec<T>) -> Self {
-        Self {
-            key,
-            enqueued_at: Instant::now(),
-            rows,
-        }
-    }
-}
-
 /// Main DB handler: routes -> acquires pool conn -> writes batch -> updates metrics.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct DbHandler {
     pools: Arc<DbPools>,
     writer: WriterConfig,
-    metrics: DbMetrics,
+    metrics: Arc<DbMetrics>,
     inflight: Arc<Semaphore>,
 }
 
 impl DbHandler {
-    pub fn new(pools: Arc<DbPools>, writer: WriterConfig, metrics: DbMetrics) -> Self {
+    pub fn new(pools: Arc<DbPools>, writer: WriterConfig, metrics: Arc<DbMetrics>) -> Self {
         let inflight = Arc::new(Semaphore::new(writer.max_inflight_batches));
         Self {
             pools,
@@ -79,16 +54,7 @@ impl DbHandler {
     /// - If batch has fewer than batch_size rows AND flush_interval has NOT elapsed: returns Ok (keeps rows)
     /// - Otherwise: writes (in chunks of batch_size), then clears rows and resets enqueued_at
     pub async fn write_batch<T: BatchInsertRow>(&self, batch: &mut Batch<T>) -> AppResult<()> {
-        if batch.rows.is_empty() {
-            return Ok(());
-        }
-
-        let max_rows = self.writer.batch_size.max(1);
-        let flush_due =
-            (batch.enqueued_at.elapsed().as_millis() as u64) >= self.writer.flush_interval_ms;
-
-        // Not enough rows yet, and not old enough yet -> do nothing (keep accumulating)
-        if batch.rows.len() < max_rows && !flush_due {
+        if !batch.should_flush() {
             return Ok(());
         }
 
@@ -148,18 +114,23 @@ impl DbHandler {
 
         let mut total_written: u64 = 0;
 
-        for chunk in batch.rows.chunks(max_rows) {
+        for chunk in batch.rows.chunks(batch.chunk_rows) {
             let mut qb: QueryBuilder<Postgres> = QueryBuilder::new("INSERT INTO ");
-            qb.push(&table_name);
+            qb.push("\"");
+            qb.push(&table_name.replace('.', "\".\""));
+            qb.push("\"");
+
             qb.push(" (");
 
             for (i, col) in T::COLUMNS.iter().enumerate() {
                 if i > 0 {
                     qb.push(", ");
                 }
+                qb.push("\"");
                 qb.push(*col);
+                qb.push("\"");
             }
-            qb.push(") VALUES ");
+            qb.push(") ");
 
             qb.push_values(chunk.iter(), |mut b, row| {
                 row.push_binds(&mut b);

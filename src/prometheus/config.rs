@@ -64,7 +64,12 @@ impl PrometheusConfig {
     }
 
     pub fn load_default() -> AppResult<Self> {
-        Self::load_from_file("config/prometheus.toml")
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src")
+            .join("config")
+            .join("prometheus.toml");
+
+        Self::load_from_file(path)
     }
 
     pub fn validate(&self) -> AppResult<()> {
@@ -133,5 +138,49 @@ impl PrometheusConfig {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn load_from_file_parses_and_validates_prometheus_toml() {
+        let cfg = PrometheusConfig::load_default()
+            .unwrap_or_else(|e| panic!("failed to load prometheus.toml: {e}"));
+
+        // --- minimal sanity assertions ---
+        assert!(!cfg.bind_addr.is_empty());
+        assert!(cfg.port > 0);
+        assert!(cfg.metrics_path.starts_with('/'));
+
+        // labels must be non-empty (validate already enforces this)
+        for (k, v) in &cfg.labels {
+            assert!(!k.trim().is_empty());
+            assert!(!v.trim().is_empty());
+        }
+
+        // redis_poll sanity
+        if cfg.redis_poll.enabled {
+            assert!(cfg.redis_poll.interval_sec > 0);
+        }
+
+        // targets sanity (even if empty)
+        for t in cfg
+            .targets
+            .redis_exporter
+            .iter()
+            .chain(cfg.targets.postgres_exporter.iter())
+            .chain(cfg.targets.app.iter())
+        {
+            assert!(!t.name.trim().is_empty());
+            assert!(
+                t.url.starts_with("http://") || t.url.starts_with("https://"),
+                "invalid target url: {}",
+                t.url
+            );
+        }
     }
 }

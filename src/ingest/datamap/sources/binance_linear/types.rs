@@ -59,9 +59,20 @@ pub struct BinanceLinearFundingRateSnapshot {
     pub mark_price: String,
 }
 
-impl FromJsonStr for Vec<BinanceLinearFundingRateSnapshot> {
+impl FromJsonStr for BinanceLinearFundingRateSnapshot {
     fn from_json_str(s: &str) -> AppResult<Self> {
-        serde_json::from_str(s).map_err(AppError::Json)
+        let mut v: Vec<BinanceLinearFundingRateSnapshot> =
+            serde_json::from_str(s).map_err(AppError::Json)?;
+
+        match v.len() {
+            1 => Ok(v.remove(0)),
+            0 => Err(AppError::InvalidConfig(
+                "funding_rate response was empty".into(),
+            )),
+            n => Err(AppError::InvalidConfig(format!(
+                "funding_rate response contained {n} entries, expected exactly 1"
+            ))),
+        }
     }
 }
 

@@ -6,10 +6,6 @@ use tracing_subscriber::{EnvFilter, fmt};
 ///
 /// Call this once at startup (main), and optionally from tests.
 pub fn init() {
-    rustls::crypto::ring::default_provider()
-        .install_default()
-        .expect("install rustls crypto provider");
-
     // Example default: your crate at info, noisy deps at warn
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new("info,hyper=warn,sqlx=warn,tokio_tungstenite=warn"));

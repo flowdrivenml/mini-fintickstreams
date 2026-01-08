@@ -44,7 +44,7 @@ fn map_levels_to_depth_events(
             0_i64
         } else {
             // convert reported size to BASE using price, then scale to qty_scale
-            ctx.book_size_to_base_i64(EXCHANGE, symbol, size_str, price_str)?
+            ctx.book_size_to_base_i64(size_str, price_str)?
         };
 
         out.push(MarketEvent::DepthDelta(DepthDeltaRow {
@@ -69,14 +69,7 @@ fn map_levels_to_depth_events(
 // -------------------- WS: Agg Trade -> MarketEvent::Trade --------------------
 //
 impl MapToEvents for BinanceLinearWsAggTrade {
-    fn map_to_events(
-        self,
-        ctx: &MapCtx,
-        env: Option<MapEnvelope<'_>>,
-    ) -> AppResult<Vec<MarketEvent>> {
-        // Ensure we know the instrument
-        ctx.instrument(EXCHANGE, &self.symbol)?;
-
+    fn map_to_events(self, ctx: &MapCtx, env: Option<MapEnvelope>) -> AppResult<Vec<MarketEvent>> {
         // Binance semantics: m = buyer is maker => seller is taker => taker-side = SELL
         let side = if self.is_buyer_maker {
             TradeSide::Sell
@@ -84,8 +77,7 @@ impl MapToEvents for BinanceLinearWsAggTrade {
             TradeSide::Buy
         };
 
-        let (price_i, qty_i) =
-            ctx.trade_to_scaled_i64(EXCHANGE, &self.symbol, &self.price, &self.qty)?;
+        let (price_i, qty_i) = ctx.trade_to_scaled_i64(&self.price, &self.qty)?;
 
         let row = TradeRow {
             exchange: EXCHANGE,
@@ -106,13 +98,7 @@ impl MapToEvents for BinanceLinearWsAggTrade {
 // -------------------- WS: Depth Update -> MarketEvent::DepthDelta* --------------------
 //
 impl MapToEvents for BinanceLinearWsDepthUpdate {
-    fn map_to_events(
-        self,
-        ctx: &MapCtx,
-        env: Option<MapEnvelope<'_>>,
-    ) -> AppResult<Vec<MarketEvent>> {
-        ctx.instrument(EXCHANGE, &self.symbol)?;
-
+    fn map_to_events(self, ctx: &MapCtx, env: Option<MapEnvelope>) -> AppResult<Vec<MarketEvent>> {
         // Use transact_time_ms (T) as closer-to-book-apply time; event_time_ms is also fine.
         let time = ms_to_utc(self.transact_time_ms)?;
         let seq = Some(self.final_update_id as i64);
@@ -150,11 +136,7 @@ impl MapToEvents for BinanceLinearWsDepthUpdate {
 // DB doesn't store `is_snapshot`, but these rows are still useful to seed state if you replay.
 //
 impl MapToEvents for BinanceLinearDepthSnapshot {
-    fn map_to_events(
-        self,
-        ctx: &MapCtx,
-        env: Option<MapEnvelope<'_>>,
-    ) -> AppResult<Vec<MarketEvent>> {
+    fn map_to_events(self, ctx: &MapCtx, env: Option<MapEnvelope>) -> AppResult<Vec<MarketEvent>> {
         let env = env.ok_or_else(|| {
             AppError::Internal(
                 "BinanceLinearDepthSnapshot requires MapEnvelope with symbol".to_string(),
@@ -167,8 +149,6 @@ impl MapToEvents for BinanceLinearDepthSnapshot {
             )
         })?;
 
-        ctx.instrument(env.exchange, symbol)?;
-
         let time = ms_to_utc(self.transact_time_ms)?;
         let seq = Some(self.last_update_id as i64);
 
@@ -176,7 +156,7 @@ impl MapToEvents for BinanceLinearDepthSnapshot {
 
         out.extend(map_levels_to_depth_events(
             ctx,
-            symbol,
+            symbol.as_str(),
             time,
             seq,
             BookSide::Bid,
@@ -186,7 +166,7 @@ impl MapToEvents for BinanceLinearDepthSnapshot {
 
         out.extend(map_levels_to_depth_events(
             ctx,
-            symbol,
+            symbol.as_str(),
             time,
             seq,
             BookSide::Ask,
@@ -204,8 +184,6 @@ pub fn map_depth_snapshot(
     symbol: &str,
     snapshot: BinanceLinearDepthSnapshot,
 ) -> AppResult<Vec<MarketEvent>> {
-    ctx.instrument(EXCHANGE, symbol)?;
-
     let time = ms_to_utc(snapshot.transact_time_ms)?;
     let seq = Some(snapshot.last_update_id as i64);
 
@@ -238,13 +216,7 @@ pub fn map_depth_snapshot(
 // -------------------- REST: Open Interest -> MarketEvent::OpenInterest --------------------
 //
 impl MapToEvents for BinanceLinearOpenInterestSnapshot {
-    fn map_to_events(
-        self,
-        ctx: &MapCtx,
-        env: Option<MapEnvelope<'_>>,
-    ) -> AppResult<Vec<MarketEvent>> {
-        ctx.instrument(EXCHANGE, &self.symbol)?;
-
+    fn map_to_events(self, ctx: &MapCtx, env: Option<MapEnvelope>) -> AppResult<Vec<MarketEvent>> {
         let time = ms_to_utc(self.time)?;
         let oi_i = ctx.open_interest_str_to_i64(&self.open_interest)?;
 
@@ -260,33 +232,31 @@ impl MapToEvents for BinanceLinearOpenInterestSnapshot {
 //
 // -------------------- REST: Funding Rate list -> MarketEvent::Funding* --------------------
 //
+impl MapToEvents for BinanceLinearFundingRateSnapshot {
+    fn map_to_events(self, ctx: &MapCtx, _env: Option<MapEnvelope>) -> AppResult<Vec<MarketEvent>> {
+        let funding_time = ms_to_utc(self.funding_time_ms)?;
+
+        let _rate = self
+            .funding_rate
+            .parse::<f64>()
+            .map_err(|e| AppError::Internal(format!("funding_rate parse failed: {e}")))?;
+
+        Ok(vec![MarketEvent::Funding(FundingRow {
+            exchange: EXCHANGE,
+            time: ctx.now,
+            symbol: self.symbol,
+            funding_rate: ctx.funding_str_to_i64(&self.funding_rate)?,
+            funding_time: Some(funding_time),
+        })])
+    }
+}
+
 impl MapToEvents for Vec<BinanceLinearFundingRateSnapshot> {
-    fn map_to_events(
-        self,
-        ctx: &MapCtx,
-        env: Option<MapEnvelope<'_>>,
-    ) -> AppResult<Vec<MarketEvent>> {
+    fn map_to_events(self, ctx: &MapCtx, env: Option<MapEnvelope>) -> AppResult<Vec<MarketEvent>> {
         let mut out = Vec::with_capacity(self.len());
-
-        for f in self {
-            ctx.instrument(EXCHANGE, &f.symbol)?;
-
-            let funding_time = ms_to_utc(f.funding_time_ms)?;
-            // store fetch time (ctx.now) as row.time, and actual funding timestamp in funding_time
-            let rate = f
-                .funding_rate
-                .parse::<f64>()
-                .map_err(|e| AppError::Internal(format!("funding_rate parse failed: {e}")))?;
-
-            out.push(MarketEvent::Funding(FundingRow {
-                exchange: EXCHANGE,
-                time: ctx.now,
-                symbol: f.symbol,
-                funding_rate: ctx.funding_str_to_i64(&f.funding_rate)?,
-                funding_time: Some(funding_time),
-            }));
+        for snap in self {
+            out.extend(snap.map_to_events(ctx, env.clone())?);
         }
-
         Ok(out)
     }
 }
@@ -295,14 +265,8 @@ impl MapToEvents for Vec<BinanceLinearFundingRateSnapshot> {
 // -------------------- WS: Liquidation (forceOrder) -> MarketEvent::Liquidation --------------------
 //
 impl MapToEvents for BinanceLinearWsForceOrder {
-    fn map_to_events(
-        self,
-        ctx: &MapCtx,
-        env: Option<MapEnvelope<'_>>,
-    ) -> AppResult<Vec<MarketEvent>> {
+    fn map_to_events(self, ctx: &MapCtx, env: Option<MapEnvelope>) -> AppResult<Vec<MarketEvent>> {
         let o = self.order;
-
-        ctx.instrument(EXCHANGE, &o.symbol)?;
 
         let time = ms_to_utc(o.trade_time_ms)?;
 
@@ -341,7 +305,7 @@ impl MapToEvents for BinanceLinearWsForceOrder {
             &o.avg_price
         };
 
-        let qty_i = ctx.book_size_to_base_i64(EXCHANGE, &o.symbol, qty_str, price_for_qty)?;
+        let qty_i = ctx.book_size_to_base_i64(qty_str, price_for_qty)?;
 
         Ok(vec![MarketEvent::Liquidation(LiquidationRow {
             exchange: EXCHANGE,
@@ -362,11 +326,13 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
 
-    use crate::appconfig::load_app_config;
+    use crate::app::config::load_app_config;
     use crate::error::AppResult;
     use crate::ingest::config::ExchangeConfigs;
     use crate::ingest::instruments::loader::InstrumentSpecLoader;
     use crate::ingest::instruments::registry::InstrumentRegistry;
+
+    use std::sync::Arc;
 
     use crate::ingest::datamap::ctx::MapCtx;
     use crate::ingest::datamap::event::MapEnvelope;
@@ -415,8 +381,8 @@ mod tests {
     }
 
     /// Creates a real ctx with a real instrument registry (so `ctx.instrument(...)` works).
-    async fn mk_ctx() -> AppResult<MapCtx<'static>> {
-        // Load real instruments (same approach you used in your loader tests)
+    // Load real instruments (same approach you used in your loader tests)
+    async fn mk_ctx() -> AppResult<MapCtx> {
         let appconfig = load_app_config()?;
         let exchangeconfigs = ExchangeConfigs::new(&appconfig)?;
         let loader = InstrumentSpecLoader::new(exchangeconfigs, None, None)?;
@@ -427,12 +393,14 @@ mod tests {
 
         // We need to extend lifetime to 'static for this test helper.
         // Simplest: leak the registry for test scope.
-        let reg: &'static InstrumentRegistry = Box::leak(Box::new(reg));
+        let reg = Arc::new(reg);
+        let exchange = "binance_linear";
+        let symbol = "BTCUSDT";
 
-        use crate::appconfig::load_app_config;
+        use crate::app::config::load_app_config;
         let appconfig = load_app_config()?;
 
-        Ok(MapCtx::new(reg, &appconfig))
+        Ok(MapCtx::new(reg, &appconfig, &exchange, &symbol)?)
     }
 
     #[tokio::test]
@@ -450,16 +418,11 @@ mod tests {
         // Depth snapshot JSON has no symbol; we must provide it.
         // Try to infer a reasonable symbol from the registry by choosing the first binance_linear instrument.
         // If you prefer, hardcode "BTCUSDT" if your testdata is always that.
-        let snapshot_symbol = ctx
-            .registry
-            .iter()
-            .find(|s| s.exchange == "binance_linear")
-            .map(|s| s.symbol.as_str())
-            .unwrap_or("BTCUSDT");
+        let snapshot_symbol = "BTCUSDT";
 
         let env = MapEnvelope {
-            exchange: "binance_linear",
-            symbol: Some(snapshot_symbol),
+            exchange: "binance_linear".to_string(),
+            symbol: Some(snapshot_symbol.to_string()),
         };
 
         let depth_events = depth_snapshot.map_to_events(&ctx, Some(env))?;
@@ -479,9 +442,8 @@ mod tests {
         // -------------------------
         // Funding rate list (REST)
         // -------------------------
-        let funding_list = load_and_parse::<Vec<BinanceLinearFundingRateSnapshot>>(
-            "BinanceLinearFundingRateSnapshot",
-        )?;
+        let funding_list =
+            load_and_parse::<BinanceLinearFundingRateSnapshot>("BinanceLinearFundingRateSnapshot")?;
         let funding_events = funding_list.map_to_events(&ctx, None)?;
         preview_events("FundingRateSnapshot(list)", &funding_events);
         assert!(!funding_events.is_empty(), "expected funding list to map");
@@ -533,4 +495,3 @@ mod tests {
         Ok(())
     }
 }
-

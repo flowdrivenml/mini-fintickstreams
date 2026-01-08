@@ -1,13 +1,18 @@
+use crate::app::AppConfig;
 use crate::error::{AppError, AppResult};
 use crate::ingest::config::{ExchangeConfig, StringOrTable, WsStream};
 use crate::ingest::metrics::IngestMetrics;
 use crate::ingest::spec::{Ctx, resolve_ws_control, seed_ws_stream_ctx};
 use crate::ingest::ws::limiter_registry::WsLimiterRegistry;
 use futures_util::{SinkExt, StreamExt};
+use rand::{Rng, rng};
 use serde_json::Value as JsonValue;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::{Instant, interval};
+use tokio::time::{sleep, sleep_until};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 #[derive(Debug, Clone)]
@@ -23,12 +28,51 @@ pub enum WsEvent {
 pub struct WsClient {
     pub name: &'static str, // "binance_linear", "hyperliquid_perp"
     pub cfg: ExchangeConfig,
-    pub metrics: Option<IngestMetrics>,
+    pub metrics: Option<Arc<IngestMetrics>>,
+
+    pub ws_reconnect_backoff_initial_ms: u64,
+    pub ws_reconnect_backoff_max_ms: u64,
+    pub ws_reconnect_trip_after_failures: u32,
+    pub ws_reconnect_cooldown_seconds: u64,
 }
 
 impl WsClient {
-    pub fn new(name: &'static str, cfg: ExchangeConfig, metrics: Option<IngestMetrics>) -> Self {
-        Self { name, cfg, metrics }
+    // sensible defaults (same as we recommended for TOML)
+    const DEFAULT_WS_RECONNECT_BACKOFF_INITIAL_MS: u64 = 500;
+    const DEFAULT_WS_RECONNECT_BACKOFF_MAX_MS: u64 = 30_000;
+    const DEFAULT_WS_RECONNECT_TRIP_AFTER_FAILURES: u32 = 10;
+    const DEFAULT_WS_RECONNECT_COOLDOWN_SECONDS: u64 = 120;
+    pub fn new(
+        name: &'static str,
+        cfg: ExchangeConfig,
+        metrics: Option<Arc<IngestMetrics>>,
+        app_cfg: Option<&AppConfig>,
+    ) -> Self {
+        // pick from app config if provided, otherwise defaults
+        let (initial_ms, max_ms, trip_after, cooldown_s) = match app_cfg.as_deref() {
+            Some(ac) => (
+                ac.streams.ws_reconnect_backoff_initial_ms,
+                ac.streams.ws_reconnect_backoff_max_ms,
+                ac.streams.ws_reconnect_trip_after_failures,
+                ac.streams.ws_reconnect_cooldown_seconds,
+            ),
+            None => (
+                Self::DEFAULT_WS_RECONNECT_BACKOFF_INITIAL_MS,
+                Self::DEFAULT_WS_RECONNECT_BACKOFF_MAX_MS,
+                Self::DEFAULT_WS_RECONNECT_TRIP_AFTER_FAILURES,
+                Self::DEFAULT_WS_RECONNECT_COOLDOWN_SECONDS,
+            ),
+        };
+
+        Self {
+            name,
+            cfg,
+            metrics,
+            ws_reconnect_backoff_initial_ms: initial_ms,
+            ws_reconnect_backoff_max_ms: max_ms,
+            ws_reconnect_trip_after_failures: trip_after,
+            ws_reconnect_cooldown_seconds: cooldown_s,
+        }
     }
 
     /// Run ONE stream per connection.
@@ -42,6 +86,7 @@ impl WsClient {
         mut ctx: Ctx,
         mut on_event: F,
         test_hook: Option<&mut WsTestHook>,
+        cancel: Option<CancellationToken>,
     ) -> AppResult<()>
     where
         F: FnMut(WsEvent) -> Fut,
@@ -60,6 +105,7 @@ impl WsClient {
             control.unsubscribe,
             on_event,
             test_hook,
+            cancel,
         )
         .await
     }
@@ -71,20 +117,31 @@ impl WsClient {
         unsubscribe_msg: JsonValue,
         mut on_event: F,
         mut test_hook: Option<&mut WsTestHook>,
+        cancel: Option<CancellationToken>,
     ) -> AppResult<()>
     where
         F: FnMut(WsEvent) -> Fut,
         Fut: std::future::Future<Output = AppResult<()>>,
     {
+        let cancel = cancel.unwrap_or_else(CancellationToken::new);
+
+        let mut consecutive_failures: u32 = 0;
+        let mut backoff_ms: u64 = self.ws_reconnect_backoff_initial_ms;
+
         loop {
-            // --- TEST HOOK: allow tests to stop before reconnecting again
+            if cancel.is_cancelled() {
+                info!(exchange = self.name, "ws cancelled (outer loop)");
+                return Ok(());
+            }
+
+            // --- TEST HOOK
             if let Some(h) = test_hook.as_deref_mut() {
                 if !h.on_before_reconnect_attempt() {
                     return Ok(());
                 }
             }
 
-            // --- RECONNECT limiter: gate every connect attempt (optional)
+            // --- RECONNECT limiter
             if let Some(lims) = ws_limiters {
                 lims.acquire_reconnect(self.name).await?;
             }
@@ -92,23 +149,47 @@ impl WsClient {
             let url = self.cfg.ws_base_url.clone();
             info!(exchange = self.name, url = %url, "ws connecting");
 
-            let (ws, _resp) = connect_async(url).await.map_err(|e| {
-                AppError::Internal(format!("[ws:{}] connect error: {e}", self.name))
-            })?;
+            let (ws, _resp) = match connect_async(url).await {
+                Ok(ok) => ok,
+                Err(e) => {
+                    consecutive_failures = consecutive_failures.saturating_add(1);
+                    warn!(
+                        exchange = self.name,
+                        failures = consecutive_failures,
+                        error = %e,
+                        "ws connect failed"
+                    );
+                    reconnect_sleep(&cancel, self, &mut consecutive_failures, &mut backoff_ms)
+                        .await?;
+                    continue;
+                }
+            };
 
             let (mut write, mut read) = ws.split();
 
-            // --- SUBSCRIBE limiter: gate every subscribe send (optional)
+            // --- SUBSCRIBE limiter
             if let Some(lims) = ws_limiters {
                 lims.acquire_subscribe(self.name).await?;
             }
 
-            send_ws_payload(&mut write, &subscribe_msg).await?;
+            if let Err(e) = send_ws_payload(&mut write, &subscribe_msg).await {
+                consecutive_failures = consecutive_failures.saturating_add(1);
+                warn!(
+                    exchange = self.name,
+                    failures = consecutive_failures,
+                    error = %e,
+                    "ws subscribe failed"
+                );
+                reconnect_sleep(&cancel, self, &mut consecutive_failures, &mut backoff_ms).await?;
+                continue;
+            }
 
-            // optional heartbeat loop driver
+            // success path → reset breaker state
+            consecutive_failures = 0;
+            backoff_ms = self.ws_reconnect_backoff_initial_ms;
+
             let mut hb = self.heartbeat_sender();
 
-            // optional connection timeout
             let timeout_secs = self.cfg.ws_connection_timeout_seconds;
             let deadline = if timeout_secs > 0 {
                 Some(Instant::now() + Duration::from_secs(timeout_secs))
@@ -119,69 +200,86 @@ impl WsClient {
             let mut close_reason: Option<String> = None;
 
             loop {
-                if let Some(dl) = deadline {
-                    if Instant::now() >= dl {
-                        close_reason = Some("ws_connection_timeout_seconds reached".into());
+                tokio::select! {
+                        _ = cancel.cancelled() => {
+                            close_reason = Some("cancelled".into());
+                            break;
+                        }
+
+                // deadline branch: build an OWNED Sleep future each time (no &mut Sleep)
+                _ = async {
+                    if let Some(dl) = deadline {
+                        tokio::time::sleep_until(dl).await;
+                    } else {
+                        futures_util::future::pending::<()>().await;
+                    }
+                } => {
+                    close_reason = Some("ws_connection_timeout_seconds reached".into());
+                    break;
+                }
+
+                _ = async {
+                    if let Some(hb_tick) = hb.as_mut() {
+                        hb_tick.tick().await;
+                    } else {
+                        futures_util::future::pending::<()>().await;
+                    }
+                } => {
+                    if let Err(e) = maybe_send_ws_heartbeat(&self.cfg, &mut write).await {
+                        close_reason = Some(format!("heartbeat error: {e}"));
                         break;
                     }
                 }
 
-                if let Some(hb_tick) = hb.as_mut() {
-                    if hb_tick.tick().await.is_some() {
-                        maybe_send_ws_heartbeat(&self.cfg, &mut write).await?;
-                    }
-                }
+                            msg = read.next() => {
+                                let msg = match msg {
+                                    Some(Ok(m)) => m,
+                                    Some(Err(e)) => {
+                                        close_reason = Some(format!("read error: {e}"));
+                                        error!(exchange = self.name, error = %e, "ws read error");
+                                        break;
+                                    }
+                                    None => {
+                                        close_reason = Some("stream ended".into());
+                                        break;
+                                    }
+                                };
 
-                let msg = match read.next().await {
-                    Some(Ok(m)) => m,
-                    Some(Err(e)) => {
-                        close_reason = Some(format!("read error: {e}"));
-                        error!(exchange = self.name, error = %e, "ws read error");
-                        break;
-                    }
-                    None => {
-                        close_reason = Some("stream ended".into());
-                        break;
-                    }
-                };
-
-                match msg {
-                    Message::Text(s) => {
-                        if let Some(m) = &self.metrics {
-                            m.inc_in();
+                                match msg {
+                                    Message::Text(s) => {
+                                        if let Some(m) = &self.metrics { m.inc_in(); }
+                                        on_event(WsEvent::Text(s.to_string())).await?;
+                                        if let Some(m) = &self.metrics { m.inc_processed(); }
+                                    }
+                                    Message::Binary(b) => {
+                                        if let Some(m) = &self.metrics { m.inc_in(); }
+                                        on_event(WsEvent::Binary(b.to_vec())).await?;
+                                        if let Some(m) = &self.metrics { m.inc_processed(); }
+                                    }
+                                    Message::Ping(p) => {
+                                        on_event(WsEvent::Ping(p.clone().to_vec())).await?;
+                                        let _ = write.send(Message::Pong(p)).await;
+                                    }
+                                    Message::Pong(p) => {
+                                        on_event(WsEvent::Pong(p.to_vec())).await?;
+                                    }
+                                    Message::Close(frame) => {
+                                        close_reason = Some(format!("close: {:?}", frame));
+                                        let _ = on_event(WsEvent::Close(close_reason.clone())).await;
+                                        break;
+                                    }
+                                    _ => {}
+                                }
+                            }
                         }
-                        on_event(WsEvent::Text(s.to_string())).await?;
-                        if let Some(m) = &self.metrics {
-                            m.inc_processed();
-                        }
-                    }
-                    Message::Binary(b) => {
-                        if let Some(m) = &self.metrics {
-                            m.inc_in();
-                        }
-                        on_event(WsEvent::Binary(b.to_vec())).await?;
-                        if let Some(m) = &self.metrics {
-                            m.inc_processed();
-                        }
-                    }
-                    Message::Ping(p) => {
-                        on_event(WsEvent::Ping(p.clone().to_vec())).await?;
-                        let _ = write.send(Message::Pong(p)).await;
-                    }
-                    Message::Pong(p) => {
-                        on_event(WsEvent::Pong(p.to_vec())).await?;
-                    }
-                    Message::Close(frame) => {
-                        close_reason = Some(format!("close: {:?}", frame));
-                        let _ = on_event(WsEvent::Close(close_reason.clone())).await;
-                        break;
-                    }
-                    _ => {}
-                }
             }
-
             // best-effort unsubscribe
             let _ = send_ws_payload(&mut write, &unsubscribe_msg).await;
+
+            if cancel.is_cancelled() {
+                info!(exchange = self.name, "ws cancelled; not reconnecting");
+                return Ok(());
+            }
 
             warn!(
                 exchange = self.name,
@@ -189,10 +287,13 @@ impl WsClient {
                 "ws reconnecting"
             );
 
-            // --- TEST HOOK: allow tests to observe disconnect reasons / count cycles
             if let Some(h) = test_hook.as_deref_mut() {
                 h.on_disconnected(close_reason.as_deref());
             }
+
+            consecutive_failures = consecutive_failures.saturating_add(1);
+
+            reconnect_sleep(&cancel, self, &mut consecutive_failures, &mut backoff_ms).await?;
         }
     }
 
@@ -210,6 +311,72 @@ impl WsClient {
             frame: self.cfg.ws_heartbeat_frame.clone(),
         })
     }
+}
+
+// helper: breaker + backoff + jitter, cancellable sleep
+async fn reconnect_sleep(
+    cancel: &CancellationToken,
+    client: &WsClient,
+    consecutive_failures: &mut u32,
+    backoff_ms: &mut u64,
+) -> AppResult<()> {
+    use rand::Rng;
+    use tokio::time::sleep;
+
+    if cancel.is_cancelled() {
+        return Ok(());
+    }
+
+    // --------------------------------------------------
+    // Circuit breaker
+    // --------------------------------------------------
+    if *consecutive_failures >= client.ws_reconnect_trip_after_failures {
+        let cooldown = Duration::from_secs(client.ws_reconnect_cooldown_seconds);
+
+        warn!(
+            exchange = client.name,
+            failures = *consecutive_failures,
+            cooldown_secs = client.ws_reconnect_cooldown_seconds,
+            "ws breaker tripped; cooling down"
+        );
+
+        tokio::select! {
+            _ = cancel.cancelled() => {
+                return Ok(());
+            }
+            _ = sleep(cooldown) => {
+                *consecutive_failures = 0;
+                *backoff_ms = client.ws_reconnect_backoff_initial_ms;
+                return Ok(());
+            }
+        }
+    }
+
+    // --------------------------------------------------
+    // Exponential backoff with jitter (rand 0.9.x)
+    // IMPORTANT: RNG must NOT live across `.await`
+    // --------------------------------------------------
+    let sleep_ms: u64 = {
+        let jitter = 0.2_f64;
+        let mut rng = rand::rng(); // ✅ rand 0.9 API
+        let j = rng.random_range(-jitter..=jitter);
+        ((*backoff_ms as f64) * (1.0 + j)).max(0.0) as u64
+    };
+
+    tokio::select! {
+        _ = cancel.cancelled() => {
+            return Ok(());
+        }
+        _ = sleep(Duration::from_millis(sleep_ms)) => {}
+    }
+
+    // --------------------------------------------------
+    // Increase backoff (capped)
+    // --------------------------------------------------
+    let next = (*backoff_ms).saturating_mul(2);
+    *backoff_ms = std::cmp::min(next, client.ws_reconnect_backoff_max_ms);
+
+    Ok(())
 }
 
 /// Optional test hook to make reconnect loops deterministic in tests.
@@ -303,4 +470,3 @@ where
 
     Ok(())
 }
-

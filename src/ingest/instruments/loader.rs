@@ -22,6 +22,7 @@ use crate::ingest::instruments::spec::{InstrumentKind, InstrumentSpec, QtyUnit};
 /// Loader that owns API clients and knows how to fetch+parse exchange metadata into `InstrumentSpec`s.
 ///
 /// Parsing is exchange-specific; we keep the fetch/resolve plumbing centralized here.
+#[derive(Debug)]
 pub struct InstrumentSpecLoader {
     ctx: Ctx,
     exchange_configs: ExchangeConfigs,
@@ -37,7 +38,7 @@ impl InstrumentSpecLoader {
     pub fn new(
         exchange_configs: ExchangeConfigs,
         limiter_registry: Option<Arc<RateLimiterRegistry>>,
-        metrics: Option<IngestMetrics>,
+        metrics: Option<Arc<IngestMetrics>>,
     ) -> AppResult<Self> {
         let ctx = Ctx::new();
 
@@ -250,7 +251,7 @@ impl InstrumentSpecLoader {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::appconfig::load_app_config;
+    use crate::app::config::load_app_config;
     use crate::error::AppResult;
     use crate::ingest::config::ExchangeConfigs;
     use crate::ingest::instruments::spec::InstrumentKind; // If you already use tokio in the project, this should work as-is.

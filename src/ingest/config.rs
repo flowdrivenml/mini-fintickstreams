@@ -1,4 +1,4 @@
-use crate::appconfig::AppConfig;
+use crate::app::config::AppConfig;
 use crate::error::{AppError, AppResult};
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -133,6 +133,24 @@ impl ExchangeConfigs {
         }
 
         Ok(exchanges)
+    }
+}
+
+use crate::app::stream_types::ExchangeId;
+
+impl ExchangeConfigs {
+    pub fn get(&self, exchange: ExchangeId) -> Option<&ExchangeConfig> {
+        match exchange {
+            ExchangeId::BinanceLinear => self.binance_linear.as_ref(),
+            ExchangeId::HyperliquidPerp => self.hyperliquid_perp.as_ref(),
+        }
+    }
+
+    pub fn get_mut(&mut self, exchange: ExchangeId) -> Option<&mut ExchangeConfig> {
+        match exchange {
+            ExchangeId::BinanceLinear => self.binance_linear.as_mut(),
+            ExchangeId::HyperliquidPerp => self.hyperliquid_perp.as_mut(),
+        }
     }
 }
 

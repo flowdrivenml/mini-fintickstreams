@@ -42,7 +42,7 @@ fn map_book_levels(
         } else {
             // Hyperliquid size is base units (per your earlier loader comment),
             // but calling the generic converter keeps future flexibility.
-            ctx.book_size_to_base_i64(EXCHANGE, coin, size_str, price_str)?
+            ctx.book_size_to_base_i64(size_str, price_str)?
         };
 
         out.push(MarketEvent::DepthDelta(DepthDeltaRow {
@@ -82,14 +82,7 @@ fn map_levels(
 // -------------------- REST: L2 snapshot -> DepthDelta* --------------------
 //
 impl MapToEvents for HyperliquidPerpDepthSnapshot {
-    fn map_to_events(
-        self,
-        ctx: &MapCtx,
-        _env: Option<MapEnvelope<'_>>,
-    ) -> AppResult<Vec<MarketEvent>> {
-        // Ensure instrument exists (coin is your symbol)
-        ctx.instrument(EXCHANGE, &self.coin)?;
-
+    fn map_to_events(self, ctx: &MapCtx, _env: Option<MapEnvelope>) -> AppResult<Vec<MarketEvent>> {
         let time = ms_to_utc(self.time)?;
         // No canonical sequence in this struct; keep None
         let seq = None;
@@ -102,14 +95,8 @@ impl MapToEvents for HyperliquidPerpDepthSnapshot {
 // -------------------- WS: depth update -> DepthDelta* --------------------
 //
 impl MapToEvents for HyperliquidPerpWsDepthUpdate {
-    fn map_to_events(
-        self,
-        ctx: &MapCtx,
-        _env: Option<MapEnvelope<'_>>,
-    ) -> AppResult<Vec<MarketEvent>> {
+    fn map_to_events(self, ctx: &MapCtx, _env: Option<MapEnvelope>) -> AppResult<Vec<MarketEvent>> {
         let d = self.data;
-
-        ctx.instrument(EXCHANGE, &d.coin)?;
 
         let time = ms_to_utc(d.time)?;
         let seq = None; // Hyperliquid doesn't provide a simple monotonic id here
@@ -122,15 +109,9 @@ impl MapToEvents for HyperliquidPerpWsDepthUpdate {
 // -------------------- WS: OI + Funding -> TWO events --------------------
 //
 impl MapToEvents for HyperliquidPerpWsOIFundingUpdate {
-    fn map_to_events(
-        self,
-        ctx: &MapCtx,
-        _env: Option<MapEnvelope<'_>>,
-    ) -> AppResult<Vec<MarketEvent>> {
+    fn map_to_events(self, ctx: &MapCtx, _env: Option<MapEnvelope>) -> AppResult<Vec<MarketEvent>> {
         let coin = self.data.coin;
         let a = self.data.ctx;
-
-        ctx.instrument(EXCHANGE, &coin)?;
 
         // Hyperliquid WS payload doesn't include a timestamp here; use ingest time.
         let time = ctx.now;
@@ -165,19 +146,13 @@ impl MapToEvents for HyperliquidPerpWsOIFundingUpdate {
 // -------------------- WS: trades -> Trade* --------------------
 //
 impl MapToEvents for HyperliquidPerpWsTrade {
-    fn map_to_events(
-        self,
-        ctx: &MapCtx,
-        _env: Option<MapEnvelope<'_>>,
-    ) -> AppResult<Vec<MarketEvent>> {
+    fn map_to_events(self, ctx: &MapCtx, _env: Option<MapEnvelope>) -> AppResult<Vec<MarketEvent>> {
         let mut out = Vec::with_capacity(self.data.len());
 
         for t in self.data {
-            ctx.instrument(EXCHANGE, &t.coin)?;
-
             let side = match t.side.as_str() {
                 "B" => TradeSide::Buy,
-                "S" => TradeSide::Sell,
+                "S" | "A" => TradeSide::Sell, // Hyperliquid often uses A=ask
                 other => {
                     return Err(AppError::Internal(format!(
                         "unknown hyperliquid trade side='{other}'"
@@ -185,7 +160,7 @@ impl MapToEvents for HyperliquidPerpWsTrade {
                 }
             };
 
-            let (price_i, qty_i) = ctx.trade_to_scaled_i64(EXCHANGE, &t.coin, &t.px, &t.sz)?;
+            let (price_i, qty_i) = ctx.trade_to_scaled_i64(&t.px, &t.sz)?;
 
             out.push(MarketEvent::Trade(TradeRow {
                 exchange: EXCHANGE,
@@ -194,7 +169,9 @@ impl MapToEvents for HyperliquidPerpWsTrade {
                 side,
                 price_i,
                 qty_i,
-                trade_id: Some(t.tid as i64),
+                trade_id: Some(i64::try_from(t.tid).map_err(|_| {
+                    AppError::Internal(format!("hyperliquid tid out of i64 range: {}", t.tid))
+                })?),
                 is_maker: None, // not present in payload
             }));
         }
@@ -209,8 +186,9 @@ mod tests {
     use serde::de::DeserializeOwned;
     use std::fs;
     use std::path::PathBuf;
+    use std::sync::Arc;
 
-    use crate::appconfig::load_app_config;
+    use crate::app::config::load_app_config;
     use crate::error::AppResult;
     use crate::ingest::config::ExchangeConfigs;
     use crate::ingest::instruments::loader::InstrumentSpecLoader;
@@ -256,7 +234,7 @@ mod tests {
         }
     }
 
-    async fn mk_ctx() -> AppResult<MapCtx<'static>> {
+    async fn mk_ctx() -> AppResult<MapCtx> {
         let appconfig = load_app_config()?;
         let exchangeconfigs = ExchangeConfigs::new(&appconfig)?;
         let loader = InstrumentSpecLoader::new(exchangeconfigs, None, None)?;
@@ -264,9 +242,11 @@ mod tests {
         let reg = InstrumentRegistry::build(specs)?;
 
         // Leak for 'static in tests (fine)
-        let reg: &'static InstrumentRegistry = Box::leak(Box::new(reg));
+        let reg = Arc::new(reg);
+        let exchange = "hyperliquid_perp";
+        let symbol = "BTC";
 
-        Ok(MapCtx::new(reg, &appconfig))
+        Ok(MapCtx::new(reg, &appconfig, &exchange, &symbol)?)
     }
 
     #[tokio::test]

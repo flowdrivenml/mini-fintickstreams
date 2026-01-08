@@ -1,9 +1,10 @@
 use crate::error::{AppError, AppResult};
 use rust_decimal::Decimal;
 use rust_decimal::prelude::{FromPrimitive, ToPrimitive};
+use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum InstrumentKind {
     Spot,
     PerpLinear,
@@ -13,14 +14,14 @@ pub enum InstrumentKind {
     Options,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum QtyUnit {
     Base,      // exchange reports size in base
     Quote,     // exchange reports quote notional
     Contracts, // exchange reports number of contracts
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct InstrumentSpec {
     pub exchange: &'static str,
     pub symbol: String,

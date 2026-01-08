@@ -1,6 +1,7 @@
 // pub mod client;
 pub mod client;
 pub mod config;
+pub mod fields;
 pub mod gate;
 pub mod health;
 pub mod latency;
@@ -11,6 +12,7 @@ pub mod streams;
 // pub use client::*;
 pub use client::*;
 pub use config::*;
+pub use fields::*;
 pub use gate::*;
 pub use health::*;
 pub use latency::*;

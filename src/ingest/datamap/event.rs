@@ -1,9 +1,26 @@
 use chrono::{DateTime, Utc};
 
 #[derive(Debug, Clone)]
-pub struct MapEnvelope<'a> {
-    pub exchange: &'static str,
-    pub symbol: Option<&'a str>,
+pub struct MapEnvelope {
+    pub exchange: String,
+    pub symbol: Option<String>,
+}
+
+impl MapEnvelope {
+    pub fn new(exchange: impl Into<String>, symbol: Option<impl Into<String>>) -> Self {
+        Self {
+            exchange: exchange.into(),
+            symbol: symbol.map(Into::into),
+        }
+    }
+
+    // Convenience if you often have &str and want no allocation when symbol is None
+    pub fn new_no_symbol(exchange: impl Into<String>) -> Self {
+        Self {
+            exchange: exchange.into(),
+            symbol: None,
+        }
+    }
 }
 
 /// Trade direction convention: 0=buy, 1=sell (matches DB).

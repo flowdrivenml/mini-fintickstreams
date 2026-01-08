@@ -2,7 +2,7 @@
 
 #![cfg(test)]
 
-use crate::appconfig::load_app_config;
+use crate::app::config::load_app_config;
 use crate::error::{AppError, AppResult};
 use crate::ingest::config::ExchangeConfigs;
 use crate::ingest::spec::Ctx;
@@ -69,7 +69,7 @@ async fn test_live_ws_binance_trades_no_limiter_10_messages() -> AppResult<()> {
         .get("trades")
         .expect("missing [ws.trades] in binance config");
 
-    let client = WsClient::new("binance_linear", cfg.clone(), None);
+    let client = WsClient::new("binance_linear", cfg.clone(), None, None);
 
     let ctx = mk_ctx_btc();
     let mut hook: WsTestHook = WsTestHook {
@@ -84,6 +84,7 @@ async fn test_live_ws_binance_trades_no_limiter_10_messages() -> AppResult<()> {
             ctx,
             stop_after_n_text_messages(10).await,
             Some(&mut hook),
+            None,
         )
         .await;
 
@@ -108,7 +109,7 @@ async fn test_live_ws_hyperliquid_trades_no_limiter_10_messages() -> AppResult<(
         .get("trades")
         .expect("missing [ws.trades] in hyperliquid config");
 
-    let client = WsClient::new("hyperliquid_perp", cfg.clone(), None);
+    let client = WsClient::new("hyperliquid_perp", cfg.clone(), None, None);
 
     let ctx = mk_ctx_btc();
     let mut hook: WsTestHook = WsTestHook {
@@ -123,6 +124,7 @@ async fn test_live_ws_hyperliquid_trades_no_limiter_10_messages() -> AppResult<(
             ctx,
             stop_after_n_text_messages(10).await,
             Some(&mut hook),
+            None,
         )
         .await;
 
@@ -149,7 +151,7 @@ async fn test_live_ws_binance_trades_with_limiters_10_messages() -> AppResult<()
 
     let ws_limiters = WsLimiterRegistry::new(&appcfg, None)?;
 
-    let client = WsClient::new("binance_linear", cfg.clone(), None);
+    let client = WsClient::new("binance_linear", cfg.clone(), None, None);
 
     let ctx = mk_ctx_btc();
     let mut hook: WsTestHook = WsTestHook {
@@ -164,6 +166,7 @@ async fn test_live_ws_binance_trades_with_limiters_10_messages() -> AppResult<()
             ctx,
             stop_after_n_text_messages(10).await,
             Some(&mut hook),
+            None,
         )
         .await;
 
@@ -197,7 +200,7 @@ async fn test_live_ws_hyperliquid_trades_with_limiters_10_messages() -> AppResul
 
     let ws_limiters = WsLimiterRegistry::new(&appcfg, None)?;
 
-    let client = WsClient::new("hyperliquid_perp", cfg.clone(), None);
+    let client = WsClient::new("hyperliquid_perp", cfg.clone(), None, None);
 
     let ctx = mk_ctx_btc();
     let mut hook: WsTestHook = WsTestHook {
@@ -212,6 +215,7 @@ async fn test_live_ws_hyperliquid_trades_with_limiters_10_messages() -> AppResul
             ctx,
             stop_after_n_text_messages(2).await,
             Some(&mut hook),
+            None,
         )
         .await;
 
@@ -326,7 +330,7 @@ async fn test_local_ws_reconnects_and_pongs_no_limiter_binance() -> AppResult<()
         .expect("missing [ws.trades] in binance config")
         .clone();
 
-    let client = WsClient::new("binance_linear", cfg, None);
+    let client = WsClient::new("binance_linear", cfg, None, None);
 
     // Binance ctx: ensure stream_title renders to lowercase symbol
     let ctx = mk_ctx_btc();
@@ -361,6 +365,7 @@ async fn test_local_ws_reconnects_and_pongs_no_limiter_binance() -> AppResult<()
                     })
                 },
                 Some(&mut hook),
+                None,
             )
             .await
     })
@@ -378,6 +383,90 @@ async fn test_local_ws_reconnects_and_pongs_no_limiter_binance() -> AppResult<()
         Ok(Err(e)) => Err(e),
         Err(_) => Err(AppError::Internal(
             "local binance reconnect test timed out".into(),
+        )),
+    }
+}
+
+use tokio_util::sync::CancellationToken;
+
+#[tokio::test]
+async fn test_local_ws_cancel_stops_stuck_read_loop() -> AppResult<()> {
+    crate::telemetry::init_for_tests();
+
+    // Bind local WS server
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .map_err(|e| AppError::Internal(format!("ws test server bind error: {e}")))?;
+    let local_addr = listener.local_addr().unwrap();
+
+    tokio::spawn(async move {
+        let _ = spawn_local_ws_server_silent_listener(listener).await;
+    });
+
+    // Load real Binance config and override ws_base_url to local ws://
+    let appcfg = load_app_config()?;
+    let ex = ExchangeConfigs::new(&appcfg)?;
+    let mut cfg = ex
+        .binance_linear
+        .as_ref()
+        .expect("binance_linear config must exist")
+        .clone();
+
+    cfg.ws_base_url = format!("ws://{}", local_addr);
+
+    // Important: disable connection timeout so the only exit is cancellation
+    cfg.ws_connection_timeout_seconds = 0;
+
+    // Disable client-driven heartbeat (server is silent; we only want cancel to stop it)
+    cfg.ws_heartbeat_type = None;
+
+    let stream = cfg
+        .ws
+        .get("trades")
+        .expect("missing [ws.trades] in binance config")
+        .clone();
+
+    let client = WsClient::new("binance_linear", cfg, None, None);
+
+    let ctx = mk_ctx_btc();
+
+    let mut hook: WsTestHook = WsTestHook {
+        max_reconnect_attempts: Some(100), // should never matter; we cancel before reconnect
+        ..Default::default()
+    };
+
+    let cancel = CancellationToken::new();
+
+    // Run stream in a task
+    let cancel_for_stream = cancel.clone();
+    let run_task = tokio::spawn(async move {
+        client
+            .run_stream(
+                None,
+                &stream,
+                ctx,
+                |_ev| Box::pin(async move { Ok(()) }),
+                Some(&mut hook),
+                Some(cancel_for_stream),
+            )
+            .await
+    });
+
+    // Let it connect + get stuck in read loop
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Cancel should stop it promptly
+    cancel.cancel();
+
+    // Must exit quickly (this asserts your select!-based inner loop is correct)
+    let res = tokio::time::timeout(Duration::from_secs(2), run_task).await;
+
+    match res {
+        Ok(Ok(Ok(()))) => Ok(()),
+        Ok(Ok(Err(e))) => Err(e),
+        Ok(Err(join_err)) => Err(AppError::Internal(format!("task join error: {join_err}"))),
+        Err(_) => Err(AppError::Internal(
+            "cancel test timed out (likely stuck on read.next() / no select!)".into(),
         )),
     }
 }
@@ -424,6 +513,27 @@ async fn spawn_local_ws_server_ping_close_listener(
 
             // Close to force reconnect
             let _ = write.send(Message::Close(None)).await;
+        });
+    }
+}
+
+// --- Local WS server: accepts WS, reads subscribe, then stays silent forever.
+async fn spawn_local_ws_server_silent_listener(listener: TcpListener) -> AppResult<()> {
+    loop {
+        let (tcp, _peer) = listener
+            .accept()
+            .await
+            .map_err(|e| AppError::Internal(format!("ws test server accept error: {e}")))?;
+
+        tokio::spawn(async move {
+            let ws = accept_async(tcp).await.expect("accept_async");
+            let (_write, mut read) = ws.split();
+
+            // Read the client's subscribe message (best-effort, so test doesn't hang here)
+            let _ = tokio::time::timeout(Duration::from_secs(2), read.next()).await;
+
+            // Now: be completely silent forever (or long enough)
+            futures_util::future::pending::<()>().await;
         });
     }
 }

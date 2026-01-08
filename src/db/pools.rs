@@ -456,5 +456,85 @@ mod tests {
 
         println!("[test] pool_for() routing test OK");
     }
-}
+    #[tokio::test]
+    async fn add_pool_with_same_id_replaces_and_does_not_duplicate() {
+        if !db_tests_enabled() {
+            println!("[test] Skipping DB test (set RUN_DB_TESTS=1 to enable)");
+            return;
+        }
 
+        println!("[test] Loading TimescaleDB config");
+        let mut cfg = TimescaleDbConfig::load().expect("failed to load timescale_db.toml");
+        override_dsn_if_present(&mut cfg);
+
+        assert_eq!(
+            cfg.shards.len(),
+            1,
+            "[test] expected config to have exactly 1 shard"
+        );
+
+        println!("[test] Building DbPools with verification");
+        let pools = DbPools::new(cfg.clone(), true)
+            .await
+            .expect("DbPools::new failed");
+
+        let shard0 = cfg.shards[0].clone();
+        println!("[test] Initial shard id: {}", shard0.id);
+
+        println!("[test] Sanity: SELECT 1 on initial pool");
+        let p0 = pools
+            .pool_by_id(&shard0.id)
+            .await
+            .expect("pool_by_id failed");
+        sqlx::query("SELECT 1")
+            .execute(&p0)
+            .await
+            .expect("SELECT 1 failed");
+
+        println!("[test] Calling add_pool() again with SAME shard id (should replace)");
+        pools
+            .add_pool(shard0.clone(), true)
+            .await
+            .expect("add_pool(same id) failed");
+
+        println!("[test] Verifying pool count is still 1");
+        let all = pools.all_pools().await;
+        println!(
+            "[test] DbPools contains {} pool(s) after replace",
+            all.len()
+        );
+        assert_eq!(
+            all.len(),
+            1,
+            "expected exactly one pool after replacing same id"
+        );
+
+        println!("[test] Verifying shard snapshot count is still 1");
+        let snap = pools
+            .shards_snapshot()
+            .await
+            .expect("shards_snapshot failed");
+        println!("[test] shards_snapshot contains {} shard(s)", snap.len());
+        assert_eq!(
+            snap.len(),
+            1,
+            "expected exactly one shard config after replacing same id"
+        );
+        assert_eq!(
+            snap[0].id, shard0.id,
+            "expected shard id to remain the same"
+        );
+
+        println!("[test] SELECT 1 again via pool_by_id after replace");
+        let p1 = pools
+            .pool_by_id(&shard0.id)
+            .await
+            .expect("pool_by_id failed after replace");
+        sqlx::query("SELECT 1")
+            .execute(&p1)
+            .await
+            .expect("SELECT 1 failed after replace");
+
+        println!("[test] add_pool same-id replace test OK");
+    }
+}

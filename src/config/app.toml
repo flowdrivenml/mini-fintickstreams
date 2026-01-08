@@ -7,6 +7,15 @@ env = "prod"
 config_version = 1
 redis_enabled = true
 
+# if db is disabled at the start, then db batch will always be with default parameters you cant change it at runtime
+# defaults or in crate.db.config
+[db]
+enabled = true   
+verify = true
+
+[redis]
+enabled = true
+
 # --------------------------------------------------
 # Fixed-point scaling (canonical representation)
 # All integer values stored as: real_value * scale
@@ -28,9 +37,10 @@ hyperliquid_perp = true
 # Stream routing behavior
 # --------------------------------------------------
 [streams]
-assign_shard_on_create = true
-allow_reroute = false
-persist_assignments = true
+ws_reconnect_backoff_initial_ms = 500
+ws_reconnect_backoff_max_ms     = 30000
+ws_reconnect_trip_after_failures = 10
+ws_reconnect_cooldown_seconds   = 120
 
 # --------------------------------------------------
 # Safety limits
@@ -50,4 +60,30 @@ level = "info"
 # --------------------------------------------------
 [metrics]
 enabled = true
+
+# --------------------------------------------------
+# Runtime health (process self-protection)
+# --------------------------------------------------
+[health]
+enabled = true
+
+[health.runtime]
+enabled = true
+poll_interval_ms = 1000
+hold_down_ms = 3000
+
+# Memory (RAM)
+max_rss_mb_red = 14000
+min_avail_mem_mb_red = 800
+
+# File descriptors (sockets, files, etc.)
+fd_pct_red = 90
+
+# Tokio runtime overload (scheduler latency / drift)
+tick_drift_ms_red = 200
+drift_sustain_ticks = 5
+
+# CPU sustained overload
+cpu_pct_red = 95
+cpu_sustain_sec = 10
 

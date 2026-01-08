@@ -1,7 +1,10 @@
-mod appconfig;
-mod db;
-mod error;
-mod ingest;
-mod redis;
-mod telemetry;
+pub mod api;
+pub mod app;
+pub mod crypto_init;
+pub mod db;
+pub mod error;
+pub mod ingest;
+pub mod prometheus;
+pub mod redis;
+pub mod telemetry;
 mod tests;

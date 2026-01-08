@@ -1,6 +1,6 @@
 // src/ingest/ws_limiter_registry.rs
 use crate::{
-    appconfig::AppConfig,
+    app::config::AppConfig,
     error::{AppError, AppResult},
     ingest::{
         config::ExchangeConfigs,
@@ -11,6 +11,7 @@ use crate::{
         },
     },
 };
+use std::sync::Arc;
 
 /// Central registry so production code never deals with per-exchange WS limiter instances.
 #[derive(Debug, Clone)]
@@ -23,7 +24,7 @@ pub struct WsLimiterRegistry {
 }
 
 impl WsLimiterRegistry {
-    pub fn new(app_cfg: &AppConfig, metrics: Option<IngestMetrics>) -> AppResult<Self> {
+    pub fn new(app_cfg: &AppConfig, metrics: Option<Arc<IngestMetrics>>) -> AppResult<Self> {
         let exchange_cfgs = ExchangeConfigs::new(app_cfg)?;
 
         let binance_cfg = if app_cfg.exchange_toggles.binance_linear {

@@ -51,11 +51,12 @@ pub enum PublishOutcome {
 /// - policy gating
 /// - publish latency tracking
 /// - symbol onboarding (add streams only when healthy)
+#[derive(Debug)]
 pub struct RedisManager<T> {
     cfg: RedisConfig,
 
     // Key naming
-    keys: StreamKeyBuilder,
+    pub keys: StreamKeyBuilder,
 
     // Health + gating
     poller: HealthPoller,
@@ -108,29 +109,38 @@ where
     /// Start the health loop in a background task.
     ///
     /// Caller decides where to hold/join the task; this returns the JoinHandle.
-    pub fn spawn_health_loop(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
+    pub fn spawn_health_loop(
+        self: &Arc<Self>,
+        shutdown: tokio_util::sync::CancellationToken,
+    ) -> tokio::task::JoinHandle<()> {
         let this = Arc::clone(self);
 
         tokio::spawn(async move {
             let interval = this.poller.poll_interval();
 
             loop {
-                // 1) Pull rolling p99 from in-app tracker
-                let p99 = this.latency.p99_ms();
+                tokio::select! {
+                    _ = shutdown.cancelled() => {
+                        tracing::info!("health loop shutting down");
+                        break;
+                    }
 
-                // 2) Poll Redis (PING + INFO + pending best-effort)
-                let snap = this.poller.poll_once(this.io.as_ref(), p99).await;
+                    _ = async {
+                        // 1) Pull rolling p99
+                        let p99 = this.latency.p99_ms();
 
-                // 3) Evaluate thresholds
-                let status: HealthStatus = this.evaluator.evaluate(snap);
+                        // 2) Poll backend
+                        let snap = this.poller.poll_once(this.io.as_ref(), p99).await;
 
-                // 4) Apply policy
-                this.gate.apply_health(&status);
+                        // 3) Evaluate thresholds
+                        let status = this.evaluator.evaluate(snap);
 
-                // Optional: if you want to treat some conditions as "saturated" for onboarding only,
-                // you can encode that in evaluator or gate (already covered by DisableReason variants).
+                        // 4) Apply policy
+                        this.gate.apply_health(&status);
 
-                sleep(interval).await;
+                        sleep(interval).await;
+                    } => {}
+                }
             }
         })
     }
@@ -158,7 +168,10 @@ where
     /// - If symbol already assigned, nothing happens.
     /// - If not assigned, we only assign if gate allows onboarding.
     fn ensure_assigned(&self, exchange: &str, symbol: &str) -> bool {
-        let mut set = self.assigned_symbols.lock().expect("assigned_symbols mutex poisoned");
+        let mut set = self
+            .assigned_symbols
+            .lock()
+            .expect("assigned_symbols mutex poisoned");
         let key = (exchange.to_string(), symbol.to_string());
 
         if set.contains(&key) {
@@ -256,8 +269,10 @@ where
 
     /// Optional: clear assignments (e.g., if you want to re-onboard after a long disable).
     pub fn clear_assignments(&self) {
-        let mut set = self.assigned_symbols.lock().expect("assigned_symbols mutex poisoned");
+        let mut set = self
+            .assigned_symbols
+            .lock()
+            .expect("assigned_symbols mutex poisoned");
         set.clear();
     }
 }
-

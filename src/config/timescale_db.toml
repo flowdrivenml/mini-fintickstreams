@@ -42,7 +42,39 @@ symbol   = "*"
 
 [writer]
 batch_size = 1000              # rows per flush
+hard_batch_size = 10000        # the batch wont grow beyond
 flush_interval_ms = 50         # max time to wait before flush
+chunk_rows = 5000              # max rows per db insert
 max_inflight_batches = 4       # backpressure control
 use_copy = true                # use COPY instead of INSERT for heavy streams
+
+
+# --------------------------------------------------
+# Minimal writer health / overload protection
+# --------------------------------------------------
+
+[health]
+enabled = true # ignore, must be always enabled
+
+# How often to evaluate health from metrics
+evaluate_interval_ms = 1000
+
+# Require condition to persist before state change
+hold_down_ms = 3000
+
+# Only allow adding new streams when healthy
+admission_policy = "green_only"
+
+[health.thresholds]
+
+# If rows sit too long before flush, we are falling behind
+flush_delay_p95_ms_yellow = 200
+flush_delay_p95_ms_red    = 1000
+
+# If tasks wait for DB connections, Postgres is saturated
+pool_wait_p95_ms_yellow = 10
+pool_wait_p95_ms_red    = 50
+
+# If writer backpressure queue fills up
+writer_queue_depth_red = 4
 

@@ -8,9 +8,5 @@ pub trait FromJsonStr: Sized {
 }
 
 pub trait MapToEvents {
-    fn map_to_events(
-        self,
-        ctx: &MapCtx,
-        env: Option<MapEnvelope<'_>>,
-    ) -> AppResult<Vec<MarketEvent>>;
+    fn map_to_events(self, ctx: &MapCtx, env: Option<MapEnvelope>) -> AppResult<Vec<MarketEvent>>;
 }

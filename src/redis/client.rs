@@ -17,9 +17,9 @@ use tokio::time::timeout;
 ///   - RedisManager (xadd publish)
 ///
 /// No policy logic here.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct RedisClient {
-    manager: ConnectionManager,
+    pub manager: ConnectionManager,
     command_timeout: Duration,
 }
 
@@ -30,15 +30,16 @@ impl RedisClient {
         let connect_timeout = Duration::from_millis(cfg.connection.connect_timeout_ms);
         let command_timeout = Duration::from_millis(cfg.connection.command_timeout_ms);
 
-        let client = redis::Client::open(uri).map_err(|e| {
-            AppError::InvalidConfig(format!("invalid redis uri '{uri}': {e}"))
-        })?;
+        let client = redis::Client::open(uri)
+            .map_err(|e| AppError::InvalidConfig(format!("invalid redis uri '{uri}': {e}")))?;
 
         // Optional: ConnectionManager config (reconnect behavior).
         // Keep minimal for now.
         let mgr = timeout(connect_timeout, ConnectionManager::new(client))
             .await
-            .map_err(|_| AppError::RedisLogic(format!("redis connect timeout after {connect_timeout:?}")))?
+            .map_err(|_| {
+                AppError::RedisLogic(format!("redis connect timeout after {connect_timeout:?}"))
+            })?
             .map_err(|e| AppError::RedisLogic(format!("redis connect error: {e}")))?;
 
         Ok(Self {
@@ -53,7 +54,12 @@ impl RedisClient {
     ) -> AppResult<T> {
         timeout(self.command_timeout, fut)
             .await
-            .map_err(|_| AppError::RedisLogic(format!("redis command timeout after {:?}", self.command_timeout)))?
+            .map_err(|_| {
+                AppError::RedisLogic(format!(
+                    "redis command timeout after {:?}",
+                    self.command_timeout
+                ))
+            })?
             .map_err(|e| AppError::RedisLogic(format!("{e}")))
     }
 
@@ -200,4 +206,3 @@ impl RedisMemoryInfo {
         }
     }
 }
-

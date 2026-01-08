@@ -11,6 +11,8 @@ default_node = "a"
 # --------------------------------------------------
 # Redis nodes (standalone instances)
 # --------------------------------------------------
+# I didnt implement methods to add new nodes, as my assumptions were that a single redis server will be more than enough for one instance of the software
+# while testing, i spawned 1000 fake streams and they ate like 50 mbs of RAM, so this is not a big problem
 [nodes]
 a = "redis://127.0.0.1:6379"
 # b = "redis://127.0.0.1:6380/0"   # future capacity, new symbols only

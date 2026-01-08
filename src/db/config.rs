@@ -7,6 +7,7 @@ use std::{collections::HashSet, fs, path::Path};
 pub struct TimescaleDbConfig {
     pub shards: Vec<ShardConfig>,
     pub writer: WriterConfig,
+    pub health: HealthConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -35,9 +36,24 @@ pub struct ShardRule {
 #[derive(Debug, Clone, Deserialize)]
 pub struct WriterConfig {
     pub batch_size: usize,
+    pub hard_batch_size: usize,
     pub flush_interval_ms: u64,
+    pub chunk_rows: usize, // max rows per insert
     pub max_inflight_batches: usize,
     pub use_copy: bool,
+}
+
+impl Default for WriterConfig {
+    fn default() -> Self {
+        Self {
+            batch_size: 1000,
+            hard_batch_size: 2000,
+            flush_interval_ms: 50,
+            chunk_rows: 500,
+            max_inflight_batches: 4,
+            use_copy: true,
+        }
+    }
 }
 
 impl TimescaleDbConfig {
@@ -159,8 +175,115 @@ impl TimescaleDbConfig {
             ));
         }
 
+        // ---- Health checks (minimal)
+        let h = &self.health;
+        if h.evaluate_interval_ms == 0 {
+            return Err(AppError::InvalidConfig(
+                "timescale_db.toml: health.evaluate_interval_ms must be > 0".into(),
+            ));
+        }
+        if h.hold_down_ms == 0 {
+            return Err(AppError::InvalidConfig(
+                "timescale_db.toml: health.hold_down_ms must be > 0".into(),
+            ));
+        }
+
+        let t = &h.thresholds;
+
+        // monotonicity for yellow/red thresholds
+        if t.flush_delay_p95_ms_yellow == 0 || t.flush_delay_p95_ms_red == 0 {
+            return Err(AppError::InvalidConfig(
+                "timescale_db.toml: health.thresholds.flush_delay_* must be > 0".into(),
+            ));
+        }
+        if t.flush_delay_p95_ms_yellow > t.flush_delay_p95_ms_red {
+            return Err(AppError::InvalidConfig(
+                    "timescale_db.toml: health.thresholds.flush_delay_p95_ms_yellow must be <= flush_delay_p95_ms_red"
+                        .into(),
+                ));
+        }
+
+        if t.pool_wait_p95_ms_yellow == 0 || t.pool_wait_p95_ms_red == 0 {
+            return Err(AppError::InvalidConfig(
+                "timescale_db.toml: health.thresholds.pool_wait_* must be > 0".into(),
+            ));
+        }
+        if t.pool_wait_p95_ms_yellow > t.pool_wait_p95_ms_red {
+            return Err(AppError::InvalidConfig(
+                    "timescale_db.toml: health.thresholds.pool_wait_p95_ms_yellow must be <= pool_wait_p95_ms_red"
+                        .into(),
+                ));
+        }
+
+        if t.writer_queue_depth_red <= 0 {
+            return Err(AppError::InvalidConfig(
+                "timescale_db.toml: health.thresholds.writer_queue_depth_red must be > 0".into(),
+            ));
+        }
+
+        // Safety: don't configure queue depth red above what the writer can actually represent.
+        // (Your metrics set_queue_depth uses max_inflight_batches as the scale.)
+        let max = self.writer.max_inflight_batches as i64;
+        if t.writer_queue_depth_red > max {
+            return Err(AppError::InvalidConfig(format!(
+                "timescale_db.toml: health.thresholds.writer_queue_depth_red ({}) must be <= writer.max_inflight_batches ({})",
+                t.writer_queue_depth_red, max
+            )));
+        }
+
         Ok(())
     }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct HealthConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+
+    #[serde(default = "default_eval_interval_ms")]
+    pub evaluate_interval_ms: u64,
+
+    #[serde(default = "default_hold_down_ms")]
+    pub hold_down_ms: u64,
+
+    #[serde(default)]
+    pub admission_policy: AdmissionPolicy,
+
+    pub thresholds: HealthThresholds,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AdmissionPolicy {
+    GreenOnly,
+    GreenOrYellow,
+}
+
+impl Default for AdmissionPolicy {
+    fn default() -> Self {
+        AdmissionPolicy::GreenOnly
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct HealthThresholds {
+    pub flush_delay_p95_ms_yellow: u64,
+    pub flush_delay_p95_ms_red: u64,
+
+    pub pool_wait_p95_ms_yellow: u64,
+    pub pool_wait_p95_ms_red: u64,
+
+    pub writer_queue_depth_red: i64,
+}
+
+fn default_true() -> bool {
+    true
+}
+fn default_eval_interval_ms() -> u64 {
+    1000
+}
+fn default_hold_down_ms() -> u64 {
+    3000
 }
 
 fn validate_rule_field(prefix: &str, field: &str, value: &str) -> AppResult<()> {

@@ -42,6 +42,7 @@ use_xpending_summary = true
 # --------------------------------------------------
 # Reference scrape targets (documentation / wiring)
 # Prometheus itself still uses prometheus.yml
+# Not for k8s
 # --------------------------------------------------
 [targets]
 

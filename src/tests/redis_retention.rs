@@ -1,167 +1,146 @@
-// tests/redis_retention.rs
-//
-// Run with:
-//   REDIS_URL=redis://127.0.0.1:6380 cargo test -p <your_crate_name> --test redis_retention -- --nocapture
-//
-// Assumptions:
-// - Redis is already running at REDIS_URL
-// - Your crate exposes the modules used below
-//
-// What it tests:
-// - Publishing > maxlen entries to one stream
-// - Stream length stays bounded near maxlen (approx trimming)
-
-use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
-
-use tokio::time::sleep;
-
-use redis::AsyncCommands;
 
 use crate::redis::client::RedisClient;
-use crate::redis::config::{
-    CapacityConfig, ConnectionConfig, FailoverConfig, GroupsConfig, RedisConfig, RedisMode,
-    RetentionConfig, SaturationPolicy, DownPolicy, StreamsConfig,
-};
+use crate::redis::config::RedisConfig;
 use crate::redis::manager::{PublishOutcome, RedisManager};
 use crate::redis::metrics::RedisMetrics;
 use crate::redis::streams::StreamKind;
 
-fn redis_url() -> String {
-    std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6380".to_string())
-}
-
-fn test_config(redis_url: &str) -> RedisConfig {
-    let mut nodes = HashMap::new();
-    nodes.insert("a".to_string(), redis_url.to_string());
-
-    RedisConfig {
-        enabled: true,
-        mode: RedisMode::Single,
-        default_node: "a".into(),
-        nodes,
-
-        connection: ConnectionConfig {
-            connect_timeout_ms: 2_000,
-            command_timeout_ms: 2_000,
-            keepalive_sec: 30,
-            tcp_nodelay: true,
-        },
-
-        capacity: CapacityConfig {
-            poll_interval_sec: 1, // faster in tests
-            max_memory_pct: 95,   // keep high so we don't disable during this test
-            max_pending: 200_000, // unused for now
-            max_p99_cmd_ms: 200,  // keep high so we don't disable due to local jitter
-            redis_publish_latency_window: 512,
-        },
-
-        failover: FailoverConfig {
-            on_saturated: SaturationPolicy::StopAssigningNew,
-            on_down: DownPolicy::DisableRedisTemporarily,
-        },
-
-        streams: StreamsConfig {
-            key_format: "stream:{exchange}:{symbol}:{kind}".into(),
-            publish_trades: true,
-            publish_depth: false,
-            publish_liquidations: false,
-            publish_funding: false,
-            publish_open_interest: false,
-        },
-
-        retention: RetentionConfig {
-            maxlen: 1_000, // keep small for fast tests
-            approx: true,
-        },
-
-        groups: GroupsConfig {
-            feature_builder: "cg:features".into(),
-            ml_infer: None,
-        },
-    }
-}
-
-// helper: open an async connection manager for tests
-async fn test_conn(url: &str) -> ConnectionManager {
-    let rc = redis::Client::open(url).unwrap();
-    ConnectionManager::new(rc).await.unwrap()
-}
-
+/// Integration test:
+/// - loads RedisConfig from TOML
+/// - publishes more entries than retention allows
+/// - verifies Redis stream is trimmed
+/// - prints retention behavior for observation
 #[tokio::test]
-async fn stream_retention_keeps_length_bounded() {
-    let url = redis_url();
-    let cfg = test_config(&url);
+async fn redis_stream_retention_is_enforced() {
+    println!("\n[TEST] loading Redis config from TOML");
 
-    // Create client and manager
-    let client = Arc::new(RedisClient::connect_from_config(&cfg).await.unwrap());
-    let metrics = RedisMetrics::new().unwrap();
-    let manager = Arc::new(RedisManager::new(cfg.clone(), client.clone(), metrics).unwrap());
+    let cfg = RedisConfig::load_default().expect("failed to load RedisConfig from default TOML");
 
-    // Start health loop (keeps gate updated)
-    let _health = manager.spawn_health_loop();
+    println!(
+        "[TEST] retention.maxlen = {}, approx = {}",
+        cfg.retention.maxlen, cfg.retention.approx
+    );
+    println!("[TEST] redis enabled = {}", cfg.enabled);
 
-    // Use a unique key each run so tests don't collide
-    let exchange = "binance";
-    let symbol = format!("TESTRET_{}", std::process::id());
-    let kind = StreamKind::Trades;
-    let stream_key = format!("stream:{exchange}:{symbol}:trades");
-
-    // Clean start
-    {
-        let rc = redis::Client::open(url.as_str()).unwrap();
-        let mut conn = rc.get_async_connection().await.unwrap();
-        let _: () = conn.del(&stream_key).await.unwrap();
-    }
-
-    // Publish more than maxlen
-    let target = (cfg.retention.maxlen as usize) * 5;
-    for i in 0..target {
-        let fields = [
-            ("ts", "1700000000"),
-            ("px", "42000.0"),
-            ("qty", "0.01"),
-            ("i", Box::leak(i.to_string().into_boxed_str())), // ok for test
-        ];
-
-        let out = manager
-            .publish(exchange, &symbol, kind, &fields)
-            .await
-            .unwrap();
-
-        // In a healthy test run, most should be Published
-        // (We don't hard-fail on occasional failures; this is integration, not unit.)
-        if i < 10 {
-            assert!(matches!(out, PublishOutcome::Published | PublishOutcome::Failed));
-        }
-    }
-
-    // Give Redis a brief moment to apply approximate trimming under load
-    sleep(Duration::from_millis(200)).await;
-
-    // Check XLEN is bounded near maxlen.
-    let xlen: u64 = {
-        let rc = redis::Client::open(url.as_str()).unwrap();
-        let mut conn = rc.get_async_connection().await.unwrap();
-        conn.xlen(&stream_key).await.unwrap()
-    };
-
-    // Since MAXLEN is approximate, allow a small cushion.
-    // In practice this should stay close to maxlen.
-    let maxlen = cfg.retention.maxlen;
-    let upper = (maxlen as f64 * 1.25) as u64 + 50;
-
+    assert!(cfg.enabled, "Redis must be enabled for this test");
     assert!(
-        xlen <= upper,
-        "XLEN too large: got {xlen}, expected <= {upper} (maxlen={maxlen})"
+        cfg.retention.maxlen > 0,
+        "retention.maxlen must be > 0 for this test"
     );
 
-    // Cleanup
+    // ------------------------------------------------------------
+    // Connect Redis client
+    // ------------------------------------------------------------
+    println!("[TEST] connecting Redis client");
+
+    let client = RedisClient::connect_from_config(&cfg)
+        .await
+        .expect("failed to connect Redis client");
+
+    let client = Arc::new(client);
+
+    // ------------------------------------------------------------
+    // Build RedisManager
+    // ------------------------------------------------------------
+    let metrics = RedisMetrics::new().expect("failed to create RedisMetrics");
+    let manager = RedisManager::new(cfg.clone(), Arc::clone(&client), metrics)
+        .expect("failed to create RedisManager");
+
+    // ------------------------------------------------------------
+    // Test stream identifiers
+    // ------------------------------------------------------------
+    let exchange = "test";
+    let symbol = "BTCUSDT";
+    let kind = StreamKind::Trades;
+
+    let stream_key = manager.keys.key(exchange, symbol, kind);
+
+    println!("[TEST] using stream key: {}", stream_key);
+
+    // Ensure clean state
     {
-        let rc = redis::Client::open(url.as_str()).unwrap();
-        let mut conn = rc.get_async_connection().await.unwrap();
-        let _: () = conn.del(&stream_key).await.unwrap();
+        let mut conn = client.clone();
+        let _: redis::Value = redis::cmd("DEL")
+            .arg(&stream_key)
+            .query_async(&mut conn.manager.clone())
+            .await
+            .expect("failed to delete existing stream");
     }
+
+    // ------------------------------------------------------------
+    // Publish more entries than retention allows
+    // ------------------------------------------------------------
+    let publish_count = cfg.retention.maxlen * 2 + 5;
+
+    println!(
+        "[TEST] publishing {} messages (retention maxlen = {})",
+        publish_count, cfg.retention.maxlen
+    );
+
+    for i in 0..publish_count {
+        let seq = i.to_string();
+
+        let fields: [(&str, &str); 3] = [("seq", seq.as_str()), ("price", "100.0"), ("qty", "1.0")];
+
+        let outcome = manager
+            .publish(exchange, symbol, kind, &fields)
+            .await
+            .expect("publish returned error");
+
+        if i % 1000 == 0 {
+            println!("[TEST] publish #{i}");
+            println!("[TEST] publish #{i} -> {:?}", outcome);
+        }
+
+        assert_ne!(
+            outcome,
+            PublishOutcome::Failed,
+            "publish should not fail in healthy Redis"
+        );
+    }
+
+    // ------------------------------------------------------------
+    // Inspect stream length
+    // ------------------------------------------------------------
+    let stream_len: u64 = {
+        let mut conn = client.manager.clone();
+        redis::cmd("XLEN")
+            .arg(&stream_key)
+            .query_async(&mut conn)
+            .await
+            .expect("XLEN failed")
+    };
+
+    println!(
+        "[TEST] stream length after publishes = {} (expected <= {})",
+        stream_len, cfg.retention.maxlen
+    );
+
+    if cfg.retention.approx {
+        assert!(
+            stream_len <= cfg.retention.maxlen + 5,
+            "approx retention exceeded tolerance: len={stream_len}"
+        );
+    } else {
+        assert_eq!(
+            stream_len, cfg.retention.maxlen,
+            "exact retention not enforced"
+        );
+    }
+
+    // ------------------------------------------------------------
+    // Cleanup
+    // ------------------------------------------------------------
+    {
+        let mut conn = client.manager.clone();
+        let _: redis::Value = redis::cmd("DEL")
+            .arg(&stream_key)
+            .query_async(&mut conn)
+            .await
+            .expect("failed to cleanup stream");
+    }
+
+    println!("[TEST] cleanup complete\n");
 }
 

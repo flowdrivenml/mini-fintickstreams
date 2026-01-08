@@ -1,8 +1,7 @@
 // src/ingest/http/rate_limiter.rs
-use crate::appconfig::AppConfig;
+use crate::app::config::AppConfig;
 use crate::error::{AppError, AppResult};
-use crate::ingest::config::ExchangeConfig;
-use crate::ingest::config::ExchangeConfigs;
+use crate::ingest::config::{ExchangeConfig, ExchangeConfigs};
 use crate::ingest::metrics::IngestMetrics;
 use std::{
     sync::Arc,
@@ -32,12 +31,16 @@ struct WindowState {
 pub struct WeightedWindowLimiter {
     cfg: RateLimitConfig,
     sync: WeightSync,
-    metrics: Option<IngestMetrics>,
+    metrics: Option<Arc<IngestMetrics>>,
     state: Arc<Mutex<WindowState>>,
 }
 
 impl WeightedWindowLimiter {
-    pub fn new(cfg: RateLimitConfig, sync: WeightSync, metrics: Option<IngestMetrics>) -> Self {
+    pub fn new(
+        cfg: RateLimitConfig,
+        sync: WeightSync,
+        metrics: Option<Arc<IngestMetrics>>,
+    ) -> Self {
         Self {
             cfg,
             sync,
@@ -75,7 +78,7 @@ impl WeightedWindowLimiter {
             tokio::time::sleep(sleep_for).await;
             let waited = t0.elapsed().as_secs_f64();
 
-            if let Some(m) = &self.metrics {
+            if let Some(m) = self.metrics.as_ref() {
                 m.observe_rate_limit_wait(waited);
             }
         }
@@ -112,7 +115,7 @@ impl WeightedWindowLimiter {
 
 fn build_limiter(
     cfg: &ExchangeConfig,
-    metrics: Option<IngestMetrics>,
+    metrics: Option<Arc<IngestMetrics>>,
 ) -> Option<WeightedWindowLimiter> {
     let max = cfg.max_weight? as u32;
 
@@ -140,8 +143,7 @@ impl RateLimiterRegistry {
     ///
     /// - If an exchange is disabled via toggles -> limiter is None.
     /// - If enabled but config missing -> returns an error (production-safe).
-    pub fn new(app_cfg: &AppConfig, metrics: Option<IngestMetrics>) -> AppResult<Self> {
-        // If you already have ExchangeConfigs elsewhere, replace this with your source.
+    pub fn new(app_cfg: &AppConfig, metrics: Option<Arc<IngestMetrics>>) -> AppResult<Self> {
         let exchange_cfgs = ExchangeConfigs::new(app_cfg)?;
 
         let binance_linear = if app_cfg.exchange_toggles.binance_linear {
@@ -203,3 +205,4 @@ impl RateLimiterRegistry {
         })
     }
 }
+

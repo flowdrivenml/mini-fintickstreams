@@ -123,7 +123,7 @@ pub fn resolve_all_http(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::appconfig::load_app_config;
+    use crate::app::config::load_app_config;
     use crate::ingest::config::ExchangeConfigs;
 
     use serde_json::Value as JsonValue;

@@ -1,8 +1,9 @@
 use crate::error::AppResult;
 
 #[cfg(feature = "metrics")]
-use prometheus::{Histogram, HistogramOpts, IntCounter, IntGauge, Opts, Registry};
-
+use prometheus::{
+    Gauge, Histogram, HistogramOpts, IntCounter, IntCounterVec, IntGauge, Opts, Registry,
+};
 /// Metrics handle for DB writer + pool health.
 ///
 /// If you don't enable the `metrics` feature, this becomes a no-op stub with the same API.
@@ -50,6 +51,27 @@ pub struct DbMetrics {
     pub pool_max: IntGauge,
     #[cfg(feature = "metrics")]
     pub pool_wait_seconds: Histogram,
+
+    // ---------------------------
+    // ADDITIONS (health + clarity)
+    // ---------------------------
+    /// 0=green, 1=yellow, 2=red
+    #[cfg(feature = "metrics")]
+    pub db_health_state: IntGauge,
+
+    /// Error counter by kind (sqlx/timeout/connect/shutdown/other)
+    #[cfg(feature = "metrics")]
+    pub db_errors_total: IntCounterVec,
+
+    /// How many rows/batches we intended to write (enqueued), for loss/backlog visibility
+    #[cfg(feature = "metrics")]
+    pub rows_enqueued_total: IntCounter,
+    #[cfg(feature = "metrics")]
+    pub batches_enqueued_total: IntCounter,
+
+    /// Oldest pending batch age (seconds). Useful when writes stop and histograms stop updating.
+    #[cfg(feature = "metrics")]
+    pub oldest_batch_age_seconds: Gauge,
 
     // no-op fallback data (keeps struct non-empty without feature)
     #[cfg(not(feature = "metrics"))]
@@ -123,6 +145,35 @@ impl DbMetrics {
                 "Time waiting to acquire a DB connection (seconds)",
             ))?;
 
+            // ---------------------------
+            // ADDITIONS (create)
+            // ---------------------------
+
+            let db_health_state = IntGauge::with_opts(Opts::new(
+                "db_health_state",
+                "DB health state: 0=green, 1=yellow, 2=red",
+            ))?;
+
+            let db_errors_total = IntCounterVec::new(
+                Opts::new("db_errors_total", "DB errors total by kind"),
+                &["kind"],
+            )?;
+
+            let rows_enqueued_total = IntCounter::with_opts(Opts::new(
+                "db_rows_enqueued_total",
+                "Rows enqueued for writing (intended) total",
+            ))?;
+
+            let batches_enqueued_total = IntCounter::with_opts(Opts::new(
+                "db_batches_enqueued_total",
+                "Batches enqueued for writing (intended) total",
+            ))?;
+
+            let oldest_batch_age_seconds = Gauge::with_opts(Opts::new(
+                "db_oldest_batch_age_seconds",
+                "Oldest pending batch age in seconds",
+            ))?;
+
             // Register everything
             registry.register(Box::new(rows_written_total.clone()))?;
             registry.register(Box::new(batches_written_total.clone()))?;
@@ -139,6 +190,15 @@ impl DbMetrics {
             registry.register(Box::new(pool_idle.clone()))?;
             registry.register(Box::new(pool_max.clone()))?;
             registry.register(Box::new(pool_wait_seconds.clone()))?;
+
+            // ---------------------------
+            // ADDITIONS (register)
+            // ---------------------------
+            registry.register(Box::new(db_health_state.clone()))?;
+            registry.register(Box::new(db_errors_total.clone()))?;
+            registry.register(Box::new(rows_enqueued_total.clone()))?;
+            registry.register(Box::new(batches_enqueued_total.clone()))?;
+            registry.register(Box::new(oldest_batch_age_seconds.clone()))?;
 
             Ok(Self {
                 registry,
@@ -157,6 +217,13 @@ impl DbMetrics {
                 pool_idle,
                 pool_max,
                 pool_wait_seconds,
+
+                // additions
+                db_health_state,
+                db_errors_total,
+                rows_enqueued_total,
+                batches_enqueued_total,
+                oldest_batch_age_seconds,
             })
         }
 
@@ -259,5 +326,37 @@ impl DbMetrics {
             self.pool_idle.set(_idle);
             self.pool_max.set(_max);
         }
+    }
+
+    /// 0=green, 1=yellow, 2=red
+    #[inline]
+    pub fn set_health_state(&self, _state: i64) {
+        #[cfg(feature = "metrics")]
+        self.db_health_state.set(_state);
+    }
+
+    /// kind examples: "sqlx", "timeout", "connect", "shutdown", "other"
+    #[inline]
+    pub fn inc_db_error(&self, _kind: &'static str) {
+        #[cfg(feature = "metrics")]
+        self.db_errors_total.with_label_values(&[_kind]).inc();
+    }
+
+    #[inline]
+    pub fn add_rows_enqueued(&self, _n: u64) {
+        #[cfg(feature = "metrics")]
+        self.rows_enqueued_total.inc_by(_n);
+    }
+
+    #[inline]
+    pub fn inc_batches_enqueued(&self) {
+        #[cfg(feature = "metrics")]
+        self.batches_enqueued_total.inc();
+    }
+
+    #[inline]
+    pub fn set_oldest_batch_age_seconds(&self, _secs: f64) {
+        #[cfg(feature = "metrics")]
+        self.oldest_batch_age_seconds.set(_secs);
     }
 }

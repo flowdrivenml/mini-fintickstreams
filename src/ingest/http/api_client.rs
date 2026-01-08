@@ -14,7 +14,7 @@ pub struct ApiClient {
     pub http: Client,
     pub limiter_registry: Option<Arc<RateLimiterRegistry>>,
     pub timeout: Duration,
-    pub metrics: Option<IngestMetrics>,
+    pub metrics: Option<Arc<IngestMetrics>>,
 }
 
 impl ApiClient {
@@ -22,7 +22,7 @@ impl ApiClient {
         name: &'static str,
         base_url: impl Into<String>,
         limiter_registry: Option<Arc<RateLimiterRegistry>>,
-        metrics: Option<IngestMetrics>,
+        metrics: Option<Arc<IngestMetrics>>,
     ) -> Self {
         Self {
             name,
@@ -79,6 +79,7 @@ impl ApiClient {
         let resp = self.execute(spec).await?;
 
         if !resp.status().is_success() {
+            println!("status = {}", resp.status());
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
 
@@ -210,7 +211,7 @@ impl ApiClient {
 mod tests {
     use super::*;
 
-    use crate::appconfig::load_app_config;
+    use crate::app::config::load_app_config;
     use crate::error::{AppError, AppResult};
     use crate::ingest::config::ExchangeConfigs;
 
