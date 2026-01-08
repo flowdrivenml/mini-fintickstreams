@@ -2,7 +2,7 @@
 
 A high-performance, extensible **financial market data streaming service** written in **Rust**.
 
-`mini-fintickstreams` orchestrates real-time and polling-based market data streams (trades, order books, funding, open interest, liquidations, etc.), with first-class support for **PostgreSQL / TimescaleDB**, **Redis**, and **Prometheus** observability.
+`mini-fintickstreams` orchestrates real-time and polling-based market data streams (trades, order books, funding, open interest, liquidations), with first-class support for **PostgreSQL / TimescaleDB**, **Redis**, and **Prometheus** observability.
 
 It is designed to run reliably in long-lived environments (bare metal, Docker, Kubernetes) and to scale by composition rather than monolithic complexity.
 
