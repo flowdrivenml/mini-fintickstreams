@@ -298,3 +298,9 @@ I have additional internal tooling for large-scale data processing and feature g
 
 This space is open to discussion, collaboration, and—where it makes sense—potential professional cooperation.
 
+
+I strongly encourage people to **fork this project and extend it**—especially by adding support for new exchanges, instruments, or market data sources.
+
+As my focus is increasingly on **research, ML training, and strategy development**, community-driven extensions are the most effective way for this project to grow. The architecture is intentionally designed to make adding new exchanges or stream types straightforward and self-contained.
+
+If you’re interested in contributing new integrations, improving existing ones, or experimenting with alternative data sources, forks and pull requests are very welcome.

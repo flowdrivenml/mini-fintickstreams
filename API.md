@@ -2,305 +2,99 @@
 
 This document describes the HTTP API exposed by the runtime service.
 
-The API allows you to:
-- Inspect runtime, DB, and Redis health
-- Discover supported stream capabilities
-- Start and stop streams
-- Inspect stream status and counts
-- Tune running streams dynamically via knobs
-- Inspect and refresh the instruments registry
-
-Base URL:
-http://localhost:8080
-
-All requests and responses use JSON unless otherwise stated.
-
-==================================================
-HEALTH
-==================================================
+---
 
-GET /health/runtime
-Checks whether the runtime is in a GREEN state.
+## 🛠️ General Information
+- **Base URL:** `http://localhost:8080`
+- **Format:** JSON
+- **Stream ID:** Identified by `{exchange}/{symbol}/{kind}/{transport}`
 
-Example:
-curl http://localhost:8080/health/runtime
+---
 
-Response:
-{ "ok": true }
-
---------------------------------------------------
-
-GET /health/db
-DB is OK if enabled, initialized, and healthy.
-
-Example:
-curl http://localhost:8080/health/db
-
-Response:
-{ "ok": true }
-
---------------------------------------------------
-
-GET /health/redis
-Redis is OK if enabled and can publish.
-
-Example:
-curl http://localhost:8080/health/redis
-
-Response:
-{ "ok": true }
-
-==================================================
-STREAM CAPABILITIES
-==================================================
-
-GET /streams/capabilities
-Lists all supported (exchange, transport, kind) combinations.
-
-Example:
-curl http://localhost:8080/streams/capabilities
-
-Response example:
-[
-  {
-    "exchange": "binance_linear",
-    "transport": "Ws",
-    "kind": "Trades",
-    "note": null
-  },
-  {
-    "exchange": "hyperliquid_perp",
-    "transport": "Ws",
-    "kind": "FundingOpenInterest",
-    "note": "combined OI+Funding stream; request this instead of OI/Funding"
-  }
-]
-
-==================================================
-STREAMS – CONTROL & STATUS
-==================================================
-
-GET /streams
-Lists all active streams.
-
-Optional query parameters:
-- exchange
-- symbol
-- kind
-- transport
-
-Example:
-curl "http://localhost:8080/streams?exchange=binance_linear"
-
-Response:
-[
-  {
-    "id": "binance_linear:BTCUSDT:Trades:Ws",
-    "status": "Running",
-    "exchange": "binance_linear",
-    "symbol": "BTCUSDT",
-    "kind": "Trades",
-    "transport": "Ws"
-  }
-]
-
---------------------------------------------------
-
-GET /streams/count
-Returns number of active streams.
-
-Example:
-curl http://localhost:8080/streams/count
-
-Response:
-{ "count": 3 }
-
---------------------------------------------------
-
-GET /streams/{exchange}/{symbol}/{kind}/{transport}
-Returns status and spec for a single stream.
-
-Example:
-curl http://localhost:8080/streams/binance_linear/BTCUSDT/Trades/Ws
-
-Response:
-{
-  "id": "binance_linear:BTCUSDT:Trades:Ws",
-  "status": "Running",
-  "spec": {
-    "exchange": "binance_linear",
-    "symbol": "BTCUSDT",
-    "kind": "Trades",
-    "transport": "Ws"
-  }
-}
-
---------------------------------------------------
-
-POST /streams
-Starts a new stream.
-
-Request body:
-{
-  "exchange": "binance_linear",
-  "transport": "Ws",
-  "kind": "Trades",
-  "symbol": "BTCUSDT"
-}
+## 🏥 Health Checks
 
-Example:
-curl -X POST http://localhost:8080/streams \
-  -H "Content-Type: application/json" \
-  -d '{ "exchange":"binance_linear","transport":"Ws","kind":"Trades","symbol":"BTCUSDT" }'
+### Runtime Health
+`GET /health/runtime`
+Check if the runtime is in a GREEN state.
+- **Example:** `curl http://localhost:8080/health/runtime`
+- **Response:** `{ "ok": true }`
 
-Response:
-"ok"
+### Database Health
+`GET /health/db`
+OK if enabled, initialized, and reachable.
+- **Example:** `curl http://localhost:8080/health/db`
+- **Response:** `{ "ok": true }`
 
---------------------------------------------------
+### Redis Health
+`GET /health/redis`
+OK if enabled and can publish.
+- **Example:** `curl http://localhost:8080/health/redis`
+- **Response:** `{ "ok": true }`
 
-DELETE /streams
-Stops and removes a stream.
+---
 
-Request body:
-{
-  "exchange": "binance_linear",
-  "transport": "Ws",
-  "kind": "Trades",
-  "symbol": "BTCUSDT"
-}
+## 🌊 Stream Management
 
-Example:
-curl -X DELETE http://localhost:8080/streams \
-  -H "Content-Type: application/json" \
-  -d '{ "exchange":"binance_linear","transport":"Ws","kind":"Trades","symbol":"BTCUSDT" }'
+### List Capabilities
+`GET /streams/capabilities`
+Lists supported (exchange, transport, kind) combinations.
 
-Response:
-"ok"
+### List Active Streams
+`GET /streams`
+**Query Params:** `exchange`, `symbol`, `kind`, `transport`
+- **Example:** `curl "http://localhost:8080/streams?exchange=binance_linear"`
 
-==================================================
-STREAM KNOBS (LIVE TUNING)
-==================================================
+### Get Stream Count
+`GET /streams/count`
+- **Response:** `{ "count": 3 }`
 
-Streams are identified by:
-{exchange}/{symbol}/{kind}/{transport}
+### Get Specific Stream
+`GET /streams/{exchange}/{symbol}/{kind}/{transport}`
 
---------------------------------------------------
+### Start Stream
+`POST /streams`
+- **Body:** `{ "exchange": "...", "symbol": "...", "kind": "...", "transport": "..." }`
+- **Example:** `curl -X POST http://localhost:8080/streams -H "Content-Type: application/json" -d '{"exchange":"binance_linear","symbol":"BTCUSDT","kind":"Trades","transport":"Ws"}'`
 
-GET /streams/{exchange}/{symbol}/{kind}/{transport}/knobs
-Returns current knob values.
+### Stop Stream
+`DELETE /streams`
+- **Body:** Same as POST.
 
-Example:
-curl http://localhost:8080/streams/binance_linear/BTCUSDT/Trades/Ws/knobs
+---
 
-Response:
-{
-  "knobs": {
-    "disable_db_writes": false,
-    "disable_redis_publishes": false,
-    "flush_rows": 1000,
-    "flush_interval_ms": 1000,
-    "chunk_rows": 1000,
-    "hard_cap_rows": 5000
-  }
-}
+## ⚙️ Stream Knobs (Live Tuning)
 
---------------------------------------------------
+### View Knobs
+`GET /streams/{exchange}/{symbol}/{kind}/{transport}/knobs`
 
-PATCH /streams/{exchange}/{symbol}/{kind}/{transport}/knobs
-Applies partial knob updates.
+### Update Knobs
+`PATCH /streams/{exchange}/{symbol}/{kind}/{transport}/knobs`
+- **Body Example:** `{ "flush_rows": 500, "disable_redis_publishes": true }`
 
-Request body example:
-{
-  "flush_rows": 500,
-  "flush_interval_ms": 250,
-  "disable_redis_publishes": true
-}
+---
 
-Example:
-curl -X PATCH http://localhost:8080/streams/binance_linear/BTCUSDT/Trades/Ws/knobs \
-  -H "Content-Type: application/json" \
-  -d '{ "flush_rows":500,"flush_interval_ms":250,"disable_redis_publishes":true }'
+## 🎹 Instruments Registry
 
-==================================================
-INSTRUMENTS REGISTRY
-==================================================
+- `GET /instruments`: List instruments (Filter: `exchange`, `kind`)
+- `GET /instruments/count`: Get count (Filter: `exchange`)
+- `GET /instruments/exists`: Check existence (`exchange`, `symbol`)
+- `POST /instruments/refresh`: Reload the registry
 
-GET /instruments
-Lists instruments (filtered).
+---
 
-Query parameters:
-- exchange
-- kind
+## ⚠️ Error Handling
 
-Example:
-curl "http://localhost:8080/instruments?exchange=binance_linear"
+All errors return JSON: `{ "error": "message", "kind": "error_code" }`
 
---------------------------------------------------
+- **400**: Invalid argument
+- **404**: Not found
+- **409**: Conflict
+- **503**: Service Unhealthy
+- **500**: Internal Error
 
-GET /instruments/count
-Returns number of instruments matching filters.
+---
 
-Example:
-curl "http://localhost:8080/instruments/count?exchange=binance_linear"
-
-Response:
-{ "count": 412 }
-
---------------------------------------------------
-
-GET /instruments/exists
-Checks if an instrument exists.
-
-Query parameters:
-- exchange
-- symbol
-
-Example:
-curl "http://localhost:8080/instruments/exists?exchange=binance_linear&symbol=BTCUSDT"
-
-Response:
-{ "exists": true }
-
---------------------------------------------------
-
-POST /instruments/refresh
-Reloads the instruments registry.
-
-Example:
-curl -X POST http://localhost:8080/instruments/refresh
-
-Response:
-"ok"
-
-==================================================
-ERROR FORMAT
-==================================================
-
-All errors are returned as JSON.
-
-Example:
-{
-  "error": "stream not found",
-  "kind": "stream_not_found"
-}
-
-Common HTTP status codes:
-400 invalid argument
-404 not found
-409 conflict
-429 rate limited
-503 runtime / DB / Redis unhealthy
-500 internal error
-
-==================================================
-NOTES
-==================================================
-
-- Streams are uniquely identified by (exchange, symbol, kind, transport)
-- Some exchanges expose combined streams (e.g. FundingOpenInterest)
-- Health endpoints reflect admission logic
-- Knob updates are applied live and non-blocking
-- Instruments refresh is an administrative operation
-
-END OF DOCUMENT
-
+## 📝 Notes
+- Knob updates are live and non-blocking.
+- Combined streams (e.g. `FundingOpenInterest`) are preferred where available.
+- Health checks reflect admission logic for the service.
