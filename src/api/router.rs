@@ -5,7 +5,7 @@ use axum::{
 
 use crate::app::AppRuntime;
 
-use super::handlers::{health, instruments_axum, knobs, streams};
+use super::handlers::{health, instruments_axum, knobs, limiters, streams};
 
 pub fn build_router(app: AppRuntime) -> Router {
     Router::new()
@@ -50,6 +50,10 @@ pub fn build_router(app: AppRuntime) -> Router {
         .route("/instruments/count", get(instruments_axum::count))
         .route("/instruments/exists", get(instruments_axum::exists))
         .route("/instruments/refresh", post(instruments_axum::refresh))
+        // -----------------------
+        // Limiters (NEW)
+        // -----------------------
+        .route("/limiters", get(limiters::get_limiters))
         // ✅ ALWAYS last
         .with_state(app)
 }

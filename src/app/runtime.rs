@@ -13,6 +13,7 @@ use crate::ingest::instruments::registry::InstrumentRegistry;
 use crate::ingest::instruments::spec::{InstrumentKind, InstrumentSpec};
 use arc_swap::{ArcSwap, Guard};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tracing::{debug, info, instrument, warn};
@@ -617,6 +618,70 @@ impl AppRuntime {
         }
 
         out.push('\n');
+
+        Ok(out)
+    }
+}
+
+// ------------------------------------------------------------------------
+// Runtime Limiters Monitor
+// ------------------------------------------------------------------------
+use serde::{Deserialize, Serialize};
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuntimeLimiterInfo {
+    pub exchange: ExchangeId,
+    pub http_remaining: Option<u32>,
+    pub ws_subscribe_remaining: Option<u32>,
+    pub ws_reconnect_remaining: Option<u32>,
+}
+
+impl AppRuntime {
+    /// Snapshot of limiter budgets for stream admission.
+    ///
+    /// - HTTP: remaining request weight
+    /// - WS: remaining subscribe + reconnect attempts
+    ///
+    /// If `exchange` is None → returns info for all exchanges.
+    pub async fn runtime_limiter_info(
+        &self,
+        exchange: Option<ExchangeId>,
+    ) -> AppResult<Vec<RuntimeLimiterInfo>> {
+        let exchanges: Vec<ExchangeId> = match exchange {
+            Some(e) => vec![e],
+            None => vec![ExchangeId::BinanceLinear, ExchangeId::HyperliquidPerp],
+        };
+
+        let mut out = Vec::with_capacity(exchanges.len());
+
+        for ex in exchanges {
+            let ex_key = ex.as_str();
+
+            // -------------------------
+            // HTTP
+            // -------------------------
+            let http_remaining = match &self.deps.http_limiters {
+                None => None,
+                Some(reg) => reg.get_remaining_weight(ex_key).await?,
+            };
+
+            // -------------------------
+            // WS
+            // -------------------------
+            let (ws_subscribe_remaining, ws_reconnect_remaining) = match &self.deps.ws_limiters {
+                None => (None, None),
+                Some(reg) => (
+                    Some(reg.get_remaining_subscribe_attempts(ex_key).await?),
+                    Some(reg.get_remaining_reconnect_attempts(ex_key).await?),
+                ),
+            };
+
+            out.push(RuntimeLimiterInfo {
+                exchange: ex,
+                http_remaining,
+                ws_subscribe_remaining,
+                ws_reconnect_remaining,
+            });
+        }
 
         Ok(out)
     }

@@ -32,7 +32,7 @@ pub struct WeightedWindowLimiter {
     cfg: RateLimitConfig,
     sync: WeightSync,
     metrics: Option<Arc<IngestMetrics>>,
-    state: Arc<Mutex<WindowState>>,
+    pub state: Arc<Mutex<WindowState>>,
 }
 
 impl WeightedWindowLimiter {
@@ -83,7 +83,24 @@ impl WeightedWindowLimiter {
             }
         }
     }
+    /// Current used weight in the active window (auto-resets if window expired).
+    pub async fn used_weight(&self) -> u32 {
+        let mut st = self.state.lock().await;
 
+        let elapsed = st.window_start.elapsed();
+        if elapsed >= self.cfg.window {
+            st.window_start = Instant::now();
+            st.used_weight = 0;
+        }
+
+        st.used_weight
+    }
+
+    /// Optional convenience: remaining budget in current window.
+    pub async fn remaining_weight(&self) -> u32 {
+        let used = self.used_weight().await;
+        self.cfg.max_weight.saturating_sub(used)
+    }
     /// Single entrypoint to sync used weight.
     ///
     /// - If `explicit_used` is Some(u32), set it directly (manual mode / caller knows value).
@@ -192,7 +209,7 @@ impl RateLimiterRegistry {
     }
 
     /// Internal: fetch limiter by exchange key.
-    fn get(&self, exchange: &str) -> AppResult<Option<&WeightedWindowLimiter>> {
+    pub fn get(&self, exchange: &str) -> AppResult<Option<&WeightedWindowLimiter>> {
         Ok(match exchange {
             "binance_linear" => self.binance_linear.as_ref(),
             "hyperliquid_perp" => self.hyperliquid_perp.as_ref(),
@@ -204,5 +221,22 @@ impl RateLimiterRegistry {
             }
         })
     }
-}
 
+    /// Get current used weight for an exchange (None if limiter not configured).
+    pub async fn get_used_weight(&self, exchange: &str) -> AppResult<Option<u32>> {
+        if let Some(l) = self.get(exchange)? {
+            Ok(Some(l.used_weight().await))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Optional: remaining budget for an exchange (None if limiter not configured).
+    pub async fn get_remaining_weight(&self, exchange: &str) -> AppResult<Option<u32>> {
+        if let Some(l) = self.get(exchange)? {
+            Ok(Some(l.remaining_weight().await))
+        } else {
+            Ok(None)
+        }
+    }
+}

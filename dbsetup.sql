@@ -276,4 +276,5 @@ $$;
 -- Example:
 -- Warehouse-first defaults: compress after 6 hours, depth chunks 6 hours, retain 3 months, NO indexes.
 SELECT create_exchange_hypertables('hyperliquid_perp');
+SELECT create_exchange_hypertables('binance_linear');
 

@@ -8,9 +8,8 @@ config_version = 1
 redis_enabled = true
 
 # if db is disabled at the start, then db batch will always be with default parameters you cant change it at runtime
-# defaults or in crate.db.config
 [db]
-enabled = true   
+enabled = true
 verify = true
 
 [redis]
@@ -19,6 +18,7 @@ enabled = true
 # --------------------------------------------------
 # Fixed-point scaling (canonical representation)
 # All integer values stored as: real_value * scale
+# for the sake of saving disk space
 # --------------------------------------------------
 [scales]
 price = 100000000        # 1e8  (supports tiny prices like 0.0000023)

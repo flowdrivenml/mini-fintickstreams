@@ -96,6 +96,25 @@ impl SubscribeAttemptLimiter {
 
         st.used = used_attempts.min(self.cfg.max_attempts);
     }
+
+    /// Current used attempts in the active window (auto-resets if window expired).
+    pub async fn used_attempts(&self) -> u32 {
+        let mut st = self.state.lock().await;
+
+        let elapsed = st.window_start.elapsed();
+        if elapsed >= self.cfg.window {
+            st.window_start = Instant::now();
+            st.used = 0;
+        }
+
+        st.used
+    }
+
+    /// Remaining attempts in the active window.
+    pub async fn remaining_attempts(&self) -> u32 {
+        let used = self.used_attempts().await;
+        self.cfg.max_attempts.saturating_sub(used)
+    }
 }
 
 /// Limits WS RECONNECT attempts: each attempt costs weight=1.
@@ -163,6 +182,24 @@ impl ReconnectAttemptLimiter {
         }
 
         st.used = used_attempts.min(self.cfg.max_attempts);
+    }
+
+    pub async fn used_attempts(&self) -> u32 {
+        let mut st = self.state.lock().await;
+
+        let elapsed = st.window_start.elapsed();
+        if elapsed >= self.cfg.window {
+            st.window_start = Instant::now();
+            st.used = 0;
+        }
+
+        st.used
+    }
+
+    /// Remaining attempts in the active window.
+    pub async fn remaining_attempts(&self) -> u32 {
+        let used = self.used_attempts().await;
+        self.cfg.max_attempts.saturating_sub(used)
     }
 }
 

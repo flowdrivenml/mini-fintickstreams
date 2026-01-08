@@ -101,3 +101,22 @@ impl WsLimiterRegistry {
         })
     }
 }
+
+impl WsLimiterRegistry {
+    pub async fn get_used_subscribe_attempts(&self, exchange: &str) -> AppResult<u32> {
+        Ok(self.get_subscribe(exchange)?.used_attempts().await)
+    }
+
+    pub async fn get_used_reconnect_attempts(&self, exchange: &str) -> AppResult<u32> {
+        Ok(self.get_reconnect(exchange)?.used_attempts().await)
+    }
+
+    // Optional: remaining (often more useful for admission decisions)
+    pub async fn get_remaining_subscribe_attempts(&self, exchange: &str) -> AppResult<u32> {
+        Ok(self.get_subscribe(exchange)?.remaining_attempts().await)
+    }
+
+    pub async fn get_remaining_reconnect_attempts(&self, exchange: &str) -> AppResult<u32> {
+        Ok(self.get_reconnect(exchange)?.remaining_attempts().await)
+    }
+}

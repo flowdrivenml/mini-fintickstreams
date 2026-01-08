@@ -82,6 +82,20 @@ Lists supported (exchange, transport, kind) combinations.
 
 ---
 
+## 🚦 Rate Limiters (Admission Budget)
+ Get limiter budgets (all exchanges)
+- GET /limiters
+
+Get limiter budgets (single exchange)
+
+- GET /limiters?exchange=binance_linear
+- GET /limiters?exchange=hyperliquid_perp
+
+What you get back (per exchange):
+http_remaining (optional) — remaining HTTP weight in current window
+ws_subscribe_remaining — remaining WS subscribe attempts in current window
+ws_reconnect_remaining — remaining WS reconnect attempts in current window
+
 ## ⚠️ Error Handling
 
 All errors return JSON: `{ "error": "message", "kind": "error_code" }`
