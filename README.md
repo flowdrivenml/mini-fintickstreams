@@ -1,6 +1,6 @@
 # mini-fintickstreams
 
-A high-performance, extensible **financial market data streaming service** written in **Rust**.
+A high-performance, extensible **financial market data streaming service** written in **Rust**, designed to ingest and stream tick-level market data into a data warehouse for analysis, while publishing real-time updates via Redis for low-latency trading and bot implementations.
 
 `mini-fintickstreams` orchestrates real-time and polling-based market data streams (trades, order books, funding, open interest, liquidations), with first-class support for **PostgreSQL / TimescaleDB**, **Redis**, and **Prometheus** observability.
 
@@ -47,7 +47,63 @@ It is designed to run reliably in long-lived environments (bare metal, Docker, K
   - PostgreSQL / TimescaleDB  
   - Redis
 
-All components are intentionally **loosely coupled**, making the system easy to extend and reason about.
+All components are intentionally **loosely coupled**, making the system easy to extend, reason about, and evolve over time.
+
+### Extensibility Examples
+
+The architecture is designed so that new capabilities can be added with minimal impact on existing components. Typical extension points include:
+
+#### Exchanges
+New exchanges can be integrated by implementing the required stream interfaces and wiring them into the runtime:
+- Crypto derivatives & spot:
+  - Deribit
+  - Bybit
+  - OKX
+  - Kraken
+  - Coinbase
+- Traditional markets:
+  - Equities
+  - ETFs
+  - Futures
+  - Options (including regional exchanges)
+- Any data provider exposing market data via WebSocket or HTTP APIs
+
+#### Markets & Instruments
+The system is not limited to crypto:
+- Stocks
+- Options
+- Futures
+- Indices
+- Synthetic or custom instruments
+- Regional exchanges with unique market structures
+
+If an exchange provides **time-series data**, it can be modeled as a stream.
+
+#### Stream Types
+Adding new stream kinds is straightforward:
+- New market data feeds
+- Derived metrics
+- Custom aggregations
+- Alternative order book models
+- Experimental or proprietary signals
+
+#### Storage & Sinks
+Additional sinks can be added alongside or instead of existing ones:
+- Alternative databases
+- Message queues
+- Event streams
+- Custom analytics pipelines
+
+#### Scaling Strategies
+- Single-instance deployments for simplicity
+- Multi-instance deployments with shared or externalized coordination
+- Kubernetes-native horizontal scaling
+
+> In short: if there’s a market where participants enthusiastically provide liquidity (for better or worse 😉), this system can probably ingest it — and turn it into clean, structured time-series data that makes downstream analytics and ML models significantly easier to train.
+
+
+The goal is to enable experimentation, rapid iteration, and responsible operation across a wide range of markets and environments.
+
 
 ---
 
@@ -219,4 +275,26 @@ While safeguards are implemented, **ultimate responsibility lies with the operat
 - Scale responsibly
 
 The authors assume no liability for misuse or exchange-side enforcement actions.
+
+
+
+---
+
+## 🤝 Collaboration & Research
+
+At the moment, I am actively working on **algorithmic trading systems** with a strong focus on **data quality, realistic backtesting, and robust research workflows**.
+
+If you are:
+- experienced with **machine learning**
+- serious about **systematic / algorithmic trading**
+- interested in working with **clean, well-structured market data**
+- or exploring research-driven approaches to trading
+
+feel free to reach out via the Discord server:
+
+👉 **Discord:** https://discord.gg/wG49SpsM
+
+I have additional internal tooling for large-scale data processing and feature generation, and I can provide **clean, polished datasets suitable for ML research and experimentation**.
+
+This space is open to discussion, collaboration, and—where it makes sense—potential professional cooperation.
 
