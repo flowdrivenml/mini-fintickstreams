@@ -2,6 +2,7 @@
 pub type AppResult<T> = std::result::Result<T, AppError>;
 
 use reqwest::StatusCode;
+use std::path::PathBuf;
 
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
@@ -109,6 +110,15 @@ pub enum AppError {
 
     #[error("Disabled error: {0}")]
     Disabled(String),
+
+    /// Config IO error with explicit context (path + operation)
+    #[error("Configuration file IO error during {operation}: path={path}, error={source}")]
+    ConfigIoCtx {
+        operation: &'static str,
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
 }
 
 // ============================

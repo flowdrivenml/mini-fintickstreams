@@ -1,6 +1,7 @@
 use crate::error::{AppError, AppResult};
 use serde::Deserialize;
-use std::{collections::HashMap, fs, net::IpAddr, path::Path};
+use std::io::ErrorKind;
+use std::{collections::HashMap, fs, net::IpAddr, path::Path, path::PathBuf};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct PrometheusConfig {
@@ -57,19 +58,59 @@ pub struct Target {
 
 impl PrometheusConfig {
     pub fn load_from_file(path: impl AsRef<Path>) -> AppResult<Self> {
-        let raw = fs::read_to_string(path)?;
-        let cfg: Self = toml::from_str(&raw)?;
-        cfg.validate()?;
+        let path = path.as_ref();
+
+        // 1) Read file
+        let raw = fs::read_to_string(path).map_err(|e| AppError::ConfigIoCtx {
+            operation: "read_to_string",
+            path: path.to_path_buf(),
+            source: e,
+        })?;
+
+        // 2) Parse TOML with path context
+        let cfg: Self = toml::from_str(&raw).map_err(|e| {
+            AppError::InvalidConfig(format!(
+                "\n❌ Failed to parse config TOML\n\
+                 ├─ path: `{}`\n\
+                 └─ error: {}\n",
+                path.display(),
+                e
+            ))
+        })?;
+
+        // 3) Validate with path context
+        cfg.validate().map_err(|e| {
+            AppError::InvalidConfig(format!(
+                "\n❌ Config failed validation\n\
+                 ├─ path: `{}`\n\
+                 └─ error: {}\n",
+                path.display(),
+                e
+            ))
+        })?;
+
         Ok(cfg)
     }
 
     pub fn load_default() -> AppResult<Self> {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        // Build default path explicitly
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let path: PathBuf = manifest_dir
             .join("src")
             .join("config")
             .join("prometheus.toml");
 
-        Self::load_from_file(path)
+        // Load, but if it fails, wrap with a "default config" hint.
+        Self::load_from_file(&path).map_err(|e| {
+            AppError::InvalidConfig(format!(
+                "\n❌ Failed to load default config\n\
+                 ├─ default path: `{}`\n\
+                 ├─ hint: ensure the file exists in the repo, or override via env/config selection\n\
+                 └─ cause: {}\n",
+                path.display(),
+                e
+            ))
+        })
     }
 
     /// - if `from_env == false`: loads from repo (`src/config/prometheus.toml`)
@@ -83,9 +124,95 @@ impl PrometheusConfig {
         }
 
         let key = format!("MINI_FINTICKSTREAMS_PROMETHEUS_CONFIG_PATH_{version}");
-        let path = std::env::var(&key).unwrap_or_else(|_| DEFAULT_K8S_PATH.to_string());
 
-        Self::load_from_file(path)
+        let (path, source): (String, &'static str) = match std::env::var(&key) {
+            Ok(p) => (p, "env var"),
+            Err(std::env::VarError::NotPresent) => (
+                DEFAULT_K8S_PATH.to_string(),
+                "default fallback (env var not set)",
+            ),
+            Err(std::env::VarError::NotUnicode(_)) => {
+                return Err(AppError::InvalidConfig(format!(
+                    "\n❌ PROMETHEUS config path env var is not valid unicode\n\
+                 ├─ env var: `{}`\n\
+                 └─ fix: set it to a valid UTF-8 path, e.g.\n\
+                    export {}={}\n",
+                    key, key, DEFAULT_K8S_PATH
+                )));
+            }
+        };
+
+        let p = Path::new(&path);
+
+        // Fail fast with explicit reasons before trying to read/parse
+        match std::fs::metadata(p) {
+            Ok(meta) => {
+                if !meta.is_file() {
+                    return Err(AppError::InvalidConfig(format!(
+                        "\n❌ PROMETHEUS config path exists but is NOT a file\n\
+                     ├─ path: `{}`\n\
+                     ├─ source: {}\n\
+                     └─ fix: point `{}` to a TOML file (not a directory)\n",
+                        p.display(),
+                        source,
+                        key
+                    )));
+                }
+            }
+            Err(e) if e.kind() == ErrorKind::NotFound => {
+                return Err(AppError::InvalidConfig(format!(
+                    "\n❌ PROMETHEUS CONFIG FILE NOT FOUND\n\
+                 ├─ tried path: `{}`\n\
+                 ├─ source: {} (`{}`)\n\
+                 ├─ k8s default fallback: `{}`\n\
+                 └─ fix: create the file OR set env var:\n\
+                    export {}=/absolute/path/to/prometheus.toml\n",
+                    p.display(),
+                    source,
+                    key,
+                    DEFAULT_K8S_PATH,
+                    key
+                )));
+            }
+            Err(e) if e.kind() == ErrorKind::PermissionDenied => {
+                return Err(AppError::InvalidConfig(format!(
+                    "\n❌ PROMETHEUS config file exists but permission was denied\n\
+                 ├─ path: `{}`\n\
+                 ├─ source: {} (`{}`)\n\
+                 └─ os error: {}\n",
+                    p.display(),
+                    source,
+                    key,
+                    e
+                )));
+            }
+            Err(e) => {
+                return Err(AppError::InvalidConfig(format!(
+                    "\n❌ Failed to stat PROMETHEUS config file\n\
+                 ├─ path: `{}`\n\
+                 ├─ source: {} (`{}`)\n\
+                 └─ os error: {}\n",
+                    p.display(),
+                    source,
+                    key,
+                    e
+                )));
+            }
+        }
+
+        // Keep the existing parse path, but attach context if read fails inside load_from_file
+        Self::load_from_file(&path).map_err(|e| {
+            AppError::InvalidConfig(format!(
+                "\n❌ Failed to load PROMETHEUS config\n\
+             ├─ path: `{}`\n\
+             ├─ source: {} (`{}`)\n\
+             └─ error: {}\n",
+                p.display(),
+                source,
+                key,
+                e
+            ))
+        })
     }
 
     pub fn validate(&self) -> AppResult<()> {

@@ -361,22 +361,116 @@ fn is_power_of_ten(mut v: i64) -> bool {
     v == 1
 }
 
+use std::{io::ErrorKind, path::Path};
+
 const APP_CONFIG_PATH: &str = "src/config/app.toml";
 
 pub fn load_app_config(from_env: bool, version: u32) -> AppResult<AppConfig> {
     const DEFAULT_K8S_PATH: &str = "/etc/mini-fintickstreams/app.toml";
 
-    let path = if from_env {
-        let key = format!("MINI_FINTICKSTREAMS_APP_CONFIG_PATH_{version}");
-        std::env::var(&key).unwrap_or_else(|_| DEFAULT_K8S_PATH.to_string())
+    let key = format!("MINI_FINTICKSTREAMS_APP_CONFIG_PATH_{version}");
+
+    let (path, source): (String, &'static str) = if from_env {
+        match std::env::var(&key) {
+            Ok(p) => (p, "env var"),
+            Err(std::env::VarError::NotPresent) => (
+                DEFAULT_K8S_PATH.to_string(),
+                "default fallback (env var not set)",
+            ),
+            Err(std::env::VarError::NotUnicode(_)) => {
+                return Err(AppError::InvalidConfig(format!(
+                    "\n❌ APP config path env var is not valid unicode\n\
+                     ├─ env var: `{}`\n\
+                     └─ fix: set it to a valid UTF-8 path, e.g.\n\
+                        export {}={}\n",
+                    key, key, DEFAULT_K8S_PATH
+                )));
+            }
+        }
     } else {
-        APP_CONFIG_PATH.to_string()
+        (
+            APP_CONFIG_PATH.to_string(),
+            "local default (from_env=false)",
+        )
     };
 
-    let contents = std::fs::read_to_string(&path).map_err(|e| {
-        AppError::InvalidConfig(format!("Failed to read app config from {}: {}", path, e))
+    let p = Path::new(&path);
+
+    // Fail fast with explicit reasons before trying to read
+    match std::fs::metadata(p) {
+        Ok(meta) => {
+            if !meta.is_file() {
+                return Err(AppError::InvalidConfig(format!(
+                    "\n❌ APP config path exists but is NOT a file\n\
+                     ├─ path: `{}`\n\
+                     ├─ source: {}\n\
+                     └─ fix: point to a TOML file (not a directory)\n",
+                    p.display(),
+                    source
+                )));
+            }
+        }
+        Err(e) if e.kind() == ErrorKind::NotFound => {
+            return Err(AppError::InvalidConfig(format!(
+                "\n❌ APP CONFIG FILE NOT FOUND\n\
+                 ├─ tried path: `{}`\n\
+                 ├─ source: {}\n\
+                 ├─ env var (if enabled): `{}`\n\
+                 ├─ k8s default fallback: `{}`\n\
+                 ├─ local default path: `{}`\n\
+                 └─ fix: create the file OR set env var:\n\
+                    export {}=/absolute/path/to/app.toml\n",
+                p.display(),
+                source,
+                key,
+                DEFAULT_K8S_PATH,
+                APP_CONFIG_PATH,
+                key
+            )));
+        }
+        Err(e) if e.kind() == ErrorKind::PermissionDenied => {
+            return Err(AppError::InvalidConfig(format!(
+                "\n❌ APP config file exists but permission was denied\n\
+                 ├─ path: `{}`\n\
+                 ├─ source: {}\n\
+                 └─ os error: {}\n",
+                p.display(),
+                source,
+                e
+            )));
+        }
+        Err(e) => {
+            return Err(AppError::InvalidConfig(format!(
+                "\n❌ Failed to stat APP config file\n\
+                 ├─ path: `{}`\n\
+                 ├─ source: {}\n\
+                 └─ os error: {}\n",
+                p.display(),
+                source,
+                e
+            )));
+        }
+    }
+
+    // Read with better errors if something changes between metadata() and read_to_string()
+    let contents = std::fs::read_to_string(p).map_err(|e| match e.kind() {
+        ErrorKind::NotFound => AppError::InvalidConfig(format!(
+            "\n❌ APP config file disappeared while reading\n\
+             └─ path: `{}`\n",
+            p.display()
+        )),
+        ErrorKind::PermissionDenied => AppError::InvalidConfig(format!(
+            "\n❌ APP config file is not readable (permission denied)\n\
+             ├─ path: `{}`\n\
+             └─ os error: {}\n",
+            p.display(),
+            e
+        )),
+        _ => AppError::ConfigIo(e), // preserves raw IO error
     })?;
-    let config: AppConfig = toml::from_str(&contents)?;
+
+    // Keep parse errors as your typed error (has great info already)
+    let config: AppConfig = toml::from_str(&contents).map_err(AppError::ConfigToml)?;
 
     validate_config(&config)?;
     Ok(config)

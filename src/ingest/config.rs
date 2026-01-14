@@ -3,7 +3,7 @@ use crate::error::{AppError, AppResult};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::fs;
-
+use std::{io::ErrorKind, path::Path};
 // -----------------------------
 // Root config
 // -----------------------------
@@ -107,19 +107,126 @@ pub fn load_exchange_config(name: &str, from_env: bool, version: u32) -> AppResu
         "hyperliquid_perp" => (LOCAL_HL, K8S_HL, "HYPERLIQUID_PERP"),
         _ => {
             return Err(AppError::InvalidConfig(format!(
-                "unknown exchange config: {name}"
+                "\n❌ UNKNOWN EXCHANGE CONFIG\n\
+                 ├─ requested: `{}`\n\
+                 ├─ allowed: `binance_linear`, `hyperliquid_perp`\n\
+                 └─ fix: pass a supported exchange name\n",
+                name
             )));
         }
     };
 
-    let path = if from_env {
-        let key = format!("MINI_FINTICKSTREAMS_EXCHANGE_CONFIG_PATH_{version}_{env_key_suffix}");
-        std::env::var(&key).unwrap_or_else(|_| k8s_path.to_string())
+    let env_key = format!("MINI_FINTICKSTREAMS_EXCHANGE_CONFIG_PATH_{version}_{env_key_suffix}");
+
+    let (path, source): (String, &'static str) = if from_env {
+        match std::env::var(&env_key) {
+            Ok(p) => (p, "env var"),
+            Err(std::env::VarError::NotPresent) => {
+                (k8s_path.to_string(), "default fallback (env var not set)")
+            }
+            Err(std::env::VarError::NotUnicode(_)) => {
+                return Err(AppError::InvalidConfig(format!(
+                    "\n❌ EXCHANGE config path env var is not valid unicode\n\
+                     ├─ exchange: `{}`\n\
+                     ├─ env var: `{}`\n\
+                     └─ fix: set it to a valid UTF-8 path, e.g.\n\
+                        export {}={}\n",
+                    name, env_key, env_key, k8s_path
+                )));
+            }
+        }
     } else {
-        local_path.to_string()
+        (local_path.to_string(), "local default (from_env=false)")
     };
 
-    let toml_str = fs::read_to_string(&path).map_err(AppError::ConfigIo)?;
+    let p = Path::new(&path);
+
+    // Fail fast with explicit reasons before trying to read
+    match std::fs::metadata(p) {
+        Ok(meta) => {
+            if !meta.is_file() {
+                return Err(AppError::InvalidConfig(format!(
+                    "\n❌ EXCHANGE config path exists but is NOT a file\n\
+                     ├─ exchange: `{}`\n\
+                     ├─ path: `{}`\n\
+                     ├─ source: {}\n\
+                     └─ fix: point to a TOML file (not a directory)\n",
+                    name,
+                    p.display(),
+                    source
+                )));
+            }
+        }
+        Err(e) if e.kind() == ErrorKind::NotFound => {
+            return Err(AppError::InvalidConfig(format!(
+                "\n❌ EXCHANGE CONFIG FILE NOT FOUND\n\
+                 ├─ exchange: `{}`\n\
+                 ├─ tried path: `{}`\n\
+                 ├─ source: {}\n\
+                 ├─ env var (if enabled): `{}`\n\
+                 ├─ k8s default fallback: `{}`\n\
+                 ├─ local default path: `{}`\n\
+                 └─ fix: create the file OR set env var:\n\
+                    export {}=/absolute/path/to/{}.toml\n",
+                name,
+                p.display(),
+                source,
+                env_key,
+                k8s_path,
+                local_path,
+                env_key,
+                name
+            )));
+        }
+        Err(e) if e.kind() == ErrorKind::PermissionDenied => {
+            return Err(AppError::InvalidConfig(format!(
+                "\n❌ EXCHANGE config file exists but permission was denied\n\
+                 ├─ exchange: `{}`\n\
+                 ├─ path: `{}`\n\
+                 ├─ source: {}\n\
+                 └─ os error: {}\n",
+                name,
+                p.display(),
+                source,
+                e
+            )));
+        }
+        Err(e) => {
+            return Err(AppError::InvalidConfig(format!(
+                "\n❌ Failed to stat EXCHANGE config file\n\
+                 ├─ exchange: `{}`\n\
+                 ├─ path: `{}`\n\
+                 ├─ source: {}\n\
+                 └─ os error: {}\n",
+                name,
+                p.display(),
+                source,
+                e
+            )));
+        }
+    }
+
+    // Read with detailed errors (in case it changes between metadata() and read_to_string())
+    let toml_str = fs::read_to_string(p).map_err(|e| match e.kind() {
+        ErrorKind::NotFound => AppError::InvalidConfig(format!(
+            "\n❌ EXCHANGE config file disappeared while reading\n\
+             ├─ exchange: `{}`\n\
+             └─ path: `{}`\n",
+            name,
+            p.display()
+        )),
+        ErrorKind::PermissionDenied => AppError::InvalidConfig(format!(
+            "\n❌ EXCHANGE config file is not readable (permission denied)\n\
+             ├─ exchange: `{}`\n\
+             ├─ path: `{}`\n\
+             └─ os error: {}\n",
+            name,
+            p.display(),
+            e
+        )),
+        _ => AppError::ConfigIo(e),
+    })?;
+
     let cfg = toml::from_str::<ExchangeConfig>(&toml_str).map_err(AppError::ConfigToml)?;
     Ok(cfg)
 }

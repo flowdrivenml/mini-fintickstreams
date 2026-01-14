@@ -1,7 +1,8 @@
 use crate::error::{AppError, AppResult};
 use serde::Deserialize;
 use std::env;
-use std::{collections::HashSet, fs, path::Path};
+use std::{collections::HashSet, fs};
+use std::{io::ErrorKind, path::Path};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct TimescaleDbConfig {
@@ -58,19 +59,110 @@ impl Default for WriterConfig {
 
 impl TimescaleDbConfig {
     pub fn load(from_env: bool, version: u32) -> AppResult<Self> {
-        const DEFAULT_K8S_PATH: &str = "/etc/mini-fintickstreams/timescale.toml";
+        const DEFAULT_K8S_PATH: &str = "/etc/mini-fintickstreams/timescale_db.toml";
         const LOCAL_PATH: &str = "src/config/timescale_db.toml";
 
-        let path = if from_env {
-            let key = format!("MINI_FINTICKSTREAMS_TIMESCALE_CONFIG_PATH_{version}");
-            std::env::var(&key).unwrap_or_else(|_| DEFAULT_K8S_PATH.to_string())
+        let key = format!("MINI_FINTICKSTREAMS_TIMESCALE_CONFIG_PATH_{version}");
+
+        let (path, source): (String, &'static str) = if from_env {
+            match std::env::var(&key) {
+                Ok(p) => (p, "env var"),
+                Err(std::env::VarError::NotPresent) => (
+                    DEFAULT_K8S_PATH.to_string(),
+                    "default fallback (env var not set)",
+                ),
+                Err(std::env::VarError::NotUnicode(_)) => {
+                    return Err(AppError::InvalidConfig(format!(
+                        "\n❌ TIMESCALE config path env var is not valid unicode\n\
+                     ├─ env var: `{}`\n\
+                     └─ fix: set it to a valid UTF-8 path, e.g.\n\
+                        export {}={}\n",
+                        key, key, DEFAULT_K8S_PATH
+                    )));
+                }
+            }
         } else {
-            LOCAL_PATH.to_string()
+            (LOCAL_PATH.to_string(), "local default (from_env=false)")
         };
 
-        let raw = fs::read_to_string(&path)
-            .map_err(|e| AppError::InvalidConfig("invalid timescale_db.toml".to_string()))?;
-        let cfg: Self = toml::from_str(&raw)?;
+        let p = Path::new(&path);
+
+        // Fail fast with explicit reasons before trying to read
+        match std::fs::metadata(p) {
+            Ok(meta) => {
+                if !meta.is_file() {
+                    return Err(AppError::InvalidConfig(format!(
+                        "\n❌ TIMESCALE config path exists but is NOT a file\n\
+                     ├─ path: `{}`\n\
+                     ├─ source: {}\n\
+                     └─ fix: point to a TOML file (not a directory)\n",
+                        p.display(),
+                        source
+                    )));
+                }
+            }
+            Err(e) if e.kind() == ErrorKind::NotFound => {
+                return Err(AppError::InvalidConfig(format!(
+                    "\n❌ TIMESCALE CONFIG FILE NOT FOUND\n\
+                 ├─ tried path: `{}`\n\
+                 ├─ source: {}\n\
+                 ├─ env var (if enabled): `{}`\n\
+                 ├─ k8s default fallback: `{}`\n\
+                 ├─ local default path: `{}`\n\
+                 └─ fix: create the file OR set env var:\n\
+                    export {}=/absolute/path/to/timescale_db.toml\n",
+                    p.display(),
+                    source,
+                    key,
+                    DEFAULT_K8S_PATH,
+                    LOCAL_PATH,
+                    key
+                )));
+            }
+            Err(e) if e.kind() == ErrorKind::PermissionDenied => {
+                return Err(AppError::InvalidConfig(format!(
+                    "\n❌ TIMESCALE config file exists but permission was denied\n\
+                 ├─ path: `{}`\n\
+                 ├─ source: {}\n\
+                 └─ os error: {}\n",
+                    p.display(),
+                    source,
+                    e
+                )));
+            }
+            Err(e) => {
+                return Err(AppError::InvalidConfig(format!(
+                    "\n❌ Failed to stat TIMESCALE config file\n\
+                 ├─ path: `{}`\n\
+                 ├─ source: {}\n\
+                 └─ os error: {}\n",
+                    p.display(),
+                    source,
+                    e
+                )));
+            }
+        }
+
+        // Read with detailed errors (in case it changes between metadata() and read_to_string())
+        let raw = fs::read_to_string(p).map_err(|e| match e.kind() {
+            ErrorKind::NotFound => AppError::InvalidConfig(format!(
+                "\n❌ TIMESCALE config file disappeared while reading\n\
+             └─ path: `{}`\n",
+                p.display()
+            )),
+            ErrorKind::PermissionDenied => AppError::InvalidConfig(format!(
+                "\n❌ TIMESCALE config file is not readable (permission denied)\n\
+             ├─ path: `{}`\n\
+             └─ os error: {}\n",
+                p.display(),
+                e
+            )),
+            _ => AppError::ConfigIo(e),
+        })?;
+
+        // Keep parse errors rich + typed
+        let cfg: Self = toml::from_str(&raw).map_err(AppError::ConfigToml)?;
+
         cfg.validate()?;
         Ok(cfg)
     }

@@ -1,6 +1,7 @@
 use crate::error::{AppError, AppResult};
 use serde::Deserialize;
-use std::{collections::HashMap, fs, path::Path};
+use std::io::ErrorKind;
+use std::{collections::HashMap, fs, path::Path, path::PathBuf};
 
 fn default_true() -> bool {
     true
@@ -112,21 +113,64 @@ pub struct GroupsConfig {
 
 impl RedisConfig {
     pub fn load_from_file(path: impl AsRef<Path>) -> AppResult<Self> {
-        let raw = fs::read_to_string(path)?;
-        let cfg: Self = toml::from_str(&raw)?;
-        cfg.validate()?;
+        let path = path.as_ref();
+
+        // 1) Read file (with path + operation context)
+        let raw = fs::read_to_string(path).map_err(|e| AppError::ConfigIoCtx {
+            operation: "read_to_string",
+            path: path.to_path_buf(),
+            source: e,
+        })?;
+
+        // 2) Parse TOML (with path context)
+        let cfg: Self = toml::from_str(&raw).map_err(|e| {
+            AppError::InvalidConfig(format!(
+                "\n❌ Failed to parse Redis config TOML\n\
+                 ├─ path: `{}`\n\
+                 └─ error: {}\n",
+                path.display(),
+                e
+            ))
+        })?;
+
+        // 3) Validate (with path context)
+        cfg.validate().map_err(|e| {
+            AppError::InvalidConfig(format!(
+                "\n❌ Redis config failed validation\n\
+                 ├─ path: `{}`\n\
+                 └─ error: {}\n",
+                path.display(),
+                e
+            ))
+        })?;
+
         Ok(cfg)
     }
 
-    /// Default path: `config/redis.toml`
-    /// Fallback path: `src/confg/redis.toml`
+    /// Primary path: `config/redis.toml`
+    /// Fallback path: `src/config/redis.toml`
     pub fn load_default() -> AppResult<Self> {
-        match Self::load_from_file("src/config/redis.toml") {
-            Ok(cfg) => Ok(cfg),
-            Err(primary_err) => match Self::load_from_file("src/config/redis.toml") {
-                Ok(cfg) => Ok(cfg),
-                Err(_) => Err(primary_err),
-            },
+        const PRIMARY: &str = "config/redis.toml";
+        const FALLBACK: &str = "src/config/redis.toml";
+
+        let primary_attempt = Self::load_from_file(PRIMARY);
+        match primary_attempt {
+            Ok(cfg) => return Ok(cfg),
+            Err(primary_err) => {
+                let fallback_attempt = Self::load_from_file(FALLBACK);
+                match fallback_attempt {
+                    Ok(cfg) => Ok(cfg),
+                    Err(fallback_err) => Err(AppError::InvalidConfig(format!(
+                        "\n❌ Failed to load Redis config from default locations\n\
+                         ├─ primary: `{}`\n\
+                         │  └─ error: {}\n\
+                         ├─ fallback: `{}`\n\
+                         │  └─ error: {}\n\
+                         └─ fix: create one of these files, or point the app to the correct path\n",
+                        PRIMARY, primary_err, FALLBACK, fallback_err
+                    ))),
+                }
+            }
         }
     }
 
@@ -143,9 +187,96 @@ impl RedisConfig {
         }
 
         let key = format!("MINI_FINTICKSTREAMS_REDIS_CONFIG_PATH_{version}");
-        let path = std::env::var(&key).unwrap_or_else(|_| DEFAULT_K8S_PATH.to_string());
 
-        Self::load_from_file(path)
+        let (path, source): (String, &'static str) = match std::env::var(&key) {
+            Ok(p) => (p, "env var"),
+            Err(std::env::VarError::NotPresent) => (
+                DEFAULT_K8S_PATH.to_string(),
+                "default fallback (env var not set)",
+            ),
+            Err(std::env::VarError::NotUnicode(_)) => {
+                return Err(AppError::InvalidConfig(format!(
+                    "\n❌ REDIS config path env var is not valid unicode\n\
+                 ├─ env var: `{}`\n\
+                 └─ fix: set it to a valid UTF-8 path, e.g.\n\
+                    export {}={}\n",
+                    key, key, DEFAULT_K8S_PATH
+                )));
+            }
+        };
+
+        let p = Path::new(&path);
+
+        // Fail fast with explicit diagnostics
+        match std::fs::metadata(p) {
+            Ok(meta) => {
+                if !meta.is_file() {
+                    return Err(AppError::InvalidConfig(format!(
+                        "\n❌ REDIS config path exists but is NOT a file\n\
+                     ├─ path: `{}`\n\
+                     ├─ source: {} (`{}`)\n\
+                     └─ fix: point `{}` to a TOML file (not a directory)\n",
+                        p.display(),
+                        source,
+                        key,
+                        key
+                    )));
+                }
+            }
+            Err(e) if e.kind() == ErrorKind::NotFound => {
+                return Err(AppError::InvalidConfig(format!(
+                    "\n❌ REDIS CONFIG FILE NOT FOUND\n\
+                 ├─ tried path: `{}`\n\
+                 ├─ source: {} (`{}`)\n\
+                 ├─ k8s default fallback: `{}`\n\
+                 └─ fix: create the file OR set env var:\n\
+                    export {}=/absolute/path/to/redis.toml\n",
+                    p.display(),
+                    source,
+                    key,
+                    DEFAULT_K8S_PATH,
+                    key
+                )));
+            }
+            Err(e) if e.kind() == ErrorKind::PermissionDenied => {
+                return Err(AppError::InvalidConfig(format!(
+                    "\n❌ REDIS config file exists but permission was denied\n\
+                 ├─ path: `{}`\n\
+                 ├─ source: {} (`{}`)\n\
+                 └─ os error: {}\n",
+                    p.display(),
+                    source,
+                    key,
+                    e
+                )));
+            }
+            Err(e) => {
+                return Err(AppError::InvalidConfig(format!(
+                    "\n❌ Failed to stat REDIS config file\n\
+                 ├─ path: `{}`\n\
+                 ├─ source: {} (`{}`)\n\
+                 └─ os error: {}\n",
+                    p.display(),
+                    source,
+                    key,
+                    e
+                )));
+            }
+        }
+
+        // Delegate to your real loader (which returns ConfigIo / ConfigToml)
+        Self::load_from_file(&path).map_err(|e| {
+            AppError::InvalidConfig(format!(
+                "\n❌ Failed to load REDIS config\n\
+             ├─ path: `{}`\n\
+             ├─ source: {} (`{}`)\n\
+             └─ error: {}\n",
+                p.display(),
+                source,
+                key,
+                e
+            ))
+        })
     }
 
     pub fn validate(&self) -> AppResult<()> {
