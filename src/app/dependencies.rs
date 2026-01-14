@@ -361,6 +361,7 @@ impl AppDeps {
         let ws_limiters = if any_ws {
             Some(Arc::new(WsLimiterRegistry::new(
                 app_cfg,
+                exchange_cfgs,
                 ingest_metrics.clone(),
             )?))
         } else {

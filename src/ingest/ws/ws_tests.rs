@@ -149,7 +149,8 @@ async fn test_live_ws_binance_trades_with_limiters_10_messages() -> AppResult<()
         .get("trades")
         .expect("missing [ws.trades] in binance config");
 
-    let ws_limiters = WsLimiterRegistry::new(&appcfg, None)?;
+    let cfgs = ExchangeConfigs::new(&appcfg, false, 0)?;
+    let ws_limiters = WsLimiterRegistry::new(&appcfg, &cfgs, None)?;
 
     let client = WsClient::new("binance_linear", cfg.clone(), None, None);
 
@@ -198,7 +199,8 @@ async fn test_live_ws_hyperliquid_trades_with_limiters_10_messages() -> AppResul
         .get("trades")
         .expect("missing [ws.trades] in hyperliquid config");
 
-    let ws_limiters = WsLimiterRegistry::new(&appcfg, None)?;
+    let cfgs = ExchangeConfigs::new(&appcfg, false, 0)?;
+    let ws_limiters = WsLimiterRegistry::new(&appcfg, &cfgs, None)?;
 
     let client = WsClient::new("hyperliquid_perp", cfg.clone(), None, None);
 

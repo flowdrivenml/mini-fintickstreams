@@ -5,8 +5,8 @@ use std::net::SocketAddr;
 
 use super::{build_router, config::ApiConfig};
 
-pub async fn run_api_server(runtime: AppRuntime) -> AppResult<()> {
-    let cfg = ApiConfig::load_default()?;
+pub async fn run_api_server(runtime: AppRuntime, from_env: bool, version: u32) -> AppResult<()> {
+    let cfg = ApiConfig::load(from_env, version)?;
     let addr: SocketAddr = format!("{}:{}", cfg.bind_addr, cfg.port)
         .parse()
         .map_err(|e| AppError::InvalidConfig(format!("api.toml: invalid bind/port: {e}")))?;

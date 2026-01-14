@@ -24,8 +24,12 @@ pub struct WsLimiterRegistry {
 }
 
 impl WsLimiterRegistry {
-    pub fn new(app_cfg: &AppConfig, metrics: Option<Arc<IngestMetrics>>) -> AppResult<Self> {
-        let exchange_cfgs = ExchangeConfigs::new(app_cfg, false, 0)?;
+    pub fn new(
+        app_cfg: &AppConfig,
+        exchange_cfgs: &ExchangeConfigs,
+        metrics: Option<Arc<IngestMetrics>>,
+    ) -> AppResult<Self> {
+        // let exchange_cfgs = ExchangeConfigs::new(app_cfg, false, 0)?;
 
         let binance_cfg = if app_cfg.exchange_toggles.binance_linear {
             exchange_cfgs.binance_linear.as_ref().ok_or_else(|| {

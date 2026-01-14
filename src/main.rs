@@ -51,7 +51,7 @@ fn main() -> AppResult<()> {
             move || rt.encode_prometheus_text()
         };
 
-        let api_task = run_api_server(runtime.clone());
+        let api_task = run_api_server(runtime.clone(), from_env, cli.stream_version);
         let metrics_task = run_metrics_server(gather);
 
         // ✅ Keep running until one task errors/exits, or Ctrl+C
