@@ -16,7 +16,7 @@ spec:
       containers:
         - name: app
           image: ghcr.io/indianabug/mini-fintickstreams:latest
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
 
           args: ["--config","env","--shutdown-action","restore-streams","--workers","2","--stream-version","1"]
 
