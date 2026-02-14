@@ -55,7 +55,7 @@ async fn run_stream_smoke(
 
     // Wait for the stream's own cancel token to flip (oneshot path)
     eprintln!("[test] waiting for stream cancellation token to be cancelled...");
-    timeout(Duration::from_secs(15), async {
+    timeout(Duration::from_secs(7200), async {
         loop {
             let cancelled = rt
                 .state

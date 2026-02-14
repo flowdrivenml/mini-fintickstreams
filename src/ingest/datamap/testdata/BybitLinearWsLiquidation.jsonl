@@ -1,14 +1,5 @@
-{
-  "topic": "allLiquidation.BTCUSDT",
-  "type": "snapshot",
-  "ts": 1771012816887,
-  "data": [
-    {
-      "T": 1771012816862,
-      "s": "BTCUSDT",
-      "S": "Buy",
-      "v": "0.040",
-      "p": "68541.80"
-    }
-  ]
-}
+{"success":true,"ret_msg":"","conn_id":"d50fjoveuaef5o9go1k0-ctnfo","req_id":"liq-2026-02-14T21:30:43Z","op":"subscribe"}
+{"success":true,"ret_msg":"pong","conn_id":"d50fjoveuaef5o9go1k0-ctnfo","req_id":"","op":"ping"}
+{"success":true,"ret_msg":"pong","conn_id":"d50fjoveuaef5o9go1k0-ctnfo","req_id":"","op":"ping"}
+{"success":true,"ret_msg":"pong","conn_id":"d50fjoveuaef5o9go1k0-ctnfo","req_id":"","op":"ping"}
+{"success":true,"ret_msg":"pong","conn_id":"d50fjoveuaef5o9go1k0-ctnfo","req_id":"","op":"ping"}

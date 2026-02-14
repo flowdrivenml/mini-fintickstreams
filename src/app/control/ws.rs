@@ -2108,7 +2108,7 @@ pub async fn ws_bybitlinear_liquidation(
                 // Liquidations are topic-based in v5 (commonly "liquidation.<SYMBOL>")
                 // Cheap filter to avoid parsing random messages.
                 if let Some(topic) = v.get("topic").and_then(|x| x.as_str()) {
-                    if !topic.starts_with("liquidation.") {
+                    if !topic.starts_with("allLiquidation.") {
                         return Ok(());
                     }
                 } else {

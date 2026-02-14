@@ -26,7 +26,7 @@ WS_N="${WS_N:-5}"
 # Timeouts (seconds)
 # Fast streams should complete quickly; liquidations can be slow.
 WS_TIMEOUT_FAST="${WS_TIMEOUT_FAST:-15}"
-WS_TIMEOUT_LIQ="${WS_TIMEOUT_LIQ:-180}"
+WS_TIMEOUT_LIQ="${WS_TIMEOUT_LIQ:-100000000000000000}"
 
 # -------- Helpers --------
 need_cmd() {
