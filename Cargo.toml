@@ -90,6 +90,9 @@ tower-http = { version = "0.6.8", features = ["compression-full"] }
 
 clap = { version = "4.5.54", features = ["derive"] }
 
+maud = "0.27"        # HTML templating macro (super ergonomic)
+axum-extra = { version = "0.12.5", features = ["form"] }  # for Form extraction (optional but nice)
+
 [features]
 default = ["metrics", "test", "axum"]
 metrics = []

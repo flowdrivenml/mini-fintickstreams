@@ -27,6 +27,7 @@ fn spec_from_params(p: &StartStreamParams) -> StreamSpec {
     let exchange: &'static str = match p.exchange {
         ExchangeId::BinanceLinear => "binance_linear",
         ExchangeId::HyperliquidPerp => "hyperliquid_perp",
+        ExchangeId::BybitLinear => "bybit_linear",
     };
 
     StreamSpec {

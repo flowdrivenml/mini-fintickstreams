@@ -77,11 +77,13 @@ pub struct AppDeps {
     pub http_limiters: Option<Arc<RateLimiterRegistry>>,
     pub binance_linear_client: Option<Arc<ApiClient>>,
     pub hyperliquid_perp_client: Option<Arc<ApiClient>>,
+    pub bybit_linear_client: Option<Arc<ApiClient>>,
 
     // WS
     pub ws_limiters: Option<Arc<WsLimiterRegistry>>,
     pub binance_linear_ws: Option<Arc<WsClient>>,
     pub hyperliquid_perp_ws: Option<Arc<WsClient>>,
+    pub bybit_linear_ws: Option<Arc<WsClient>>,
 
     // DB (optional)
     pub db: Option<DbDeps>,
@@ -89,11 +91,9 @@ pub struct AppDeps {
     // Redis (optional)
     pub redis: Option<RedisDeps>,
 
-    // ✅ Always-present ports (real or noop)
     pub db_writer: Arc<dyn DbWriter>,
     pub redis_publisher: Arc<dyn RedisPublisher>,
 
-    // ✅ Runtime gates (4 toggle methods operate on these)
     db_enabled: Arc<AtomicBool>,
     redis_enabled: Arc<AtomicBool>,
 
@@ -180,13 +180,13 @@ impl AppDeps {
         // --------------------------------------------------
         // HTTP clients
         // --------------------------------------------------
-        let (http_limiters, binance_linear_client, hyperliquid_perp_client) =
+        let (http_limiters, binance_linear_client, hyperliquid_perp_client, bybit_linear_client) =
             Self::bootstrap_http(&app_cfgs, &exchange_cfgs, ingest_metrics.clone())?;
 
         // --------------------------------------------------
         // WS clients
         // --------------------------------------------------
-        let (ws_limiters, binance_linear_ws, hyperliquid_perp_ws) =
+        let (ws_limiters, binance_linear_ws, hyperliquid_perp_ws, bybit_linear_ws) =
             Self::bootstrap_ws(&app_cfgs, &exchange_cfgs, ingest_metrics.clone())?;
 
         // --------------------------------------------------
@@ -209,10 +209,12 @@ impl AppDeps {
             http_limiters,
             binance_linear_client,
             hyperliquid_perp_client,
+            bybit_linear_client,
 
             ws_limiters,
             binance_linear_ws,
             hyperliquid_perp_ws,
+            bybit_linear_ws,
 
             db,
             redis,
@@ -292,10 +294,12 @@ impl AppDeps {
         Option<Arc<RateLimiterRegistry>>,
         Option<Arc<ApiClient>>,
         Option<Arc<ApiClient>>,
+        Option<Arc<ApiClient>>,
     )> {
         // Create limiters only if any HTTP exchange is enabled
-        let any_http =
-            app_cfg.exchange_toggles.binance_linear || app_cfg.exchange_toggles.hyperliquid_perp;
+        let any_http = app_cfg.exchange_toggles.binance_linear
+            || app_cfg.exchange_toggles.hyperliquid_perp
+            || app_cfg.exchange_toggles.bybit_linear;
 
         let http_limiters = if any_http {
             Some(Arc::new(RateLimiterRegistry::new(
@@ -339,10 +343,27 @@ impl AppDeps {
             None
         };
 
+        let bybit_linear_client = if app_cfg.exchange_toggles.bybit_linear {
+            let bybit_cfg = exchange_cfgs
+                .bybit_linear
+                .as_ref()
+                .ok_or_else(|| AppError::MissingConfig("bybit_linear exchange config"))?;
+
+            Some(Arc::new(ApiClient::new(
+                "bybit_linear",
+                bybit_cfg.api_base_url.clone(),
+                http_limiters.clone(),
+                ingest_metrics.clone(),
+            )))
+        } else {
+            None
+        };
+
         Ok((
             http_limiters,
             binance_linear_client,
             hyperliquid_perp_client,
+            bybit_linear_client,
         ))
     }
 
@@ -354,10 +375,12 @@ impl AppDeps {
         Option<Arc<WsLimiterRegistry>>,
         Option<Arc<WsClient>>,
         Option<Arc<WsClient>>,
+        Option<Arc<WsClient>>,
     )> {
         // Create limiters only if any WS exchange is enabled
-        let any_ws =
-            app_cfg.exchange_toggles.binance_linear || app_cfg.exchange_toggles.hyperliquid_perp;
+        let any_ws = app_cfg.exchange_toggles.binance_linear
+            || app_cfg.exchange_toggles.hyperliquid_perp
+            || app_cfg.exchange_toggles.bybit_linear;
 
         let ws_limiters = if any_ws {
             Some(Arc::new(WsLimiterRegistry::new(
@@ -401,7 +424,28 @@ impl AppDeps {
             None
         };
 
-        Ok((ws_limiters, binance_linear_ws, hyperliquid_perp_ws))
+        let bybit_linear_ws = if app_cfg.exchange_toggles.bybit_linear {
+            let bybit_cfg = exchange_cfgs
+                .bybit_linear
+                .as_ref()
+                .ok_or_else(|| AppError::MissingConfig("bybit_linear exchange config"))?;
+
+            Some(Arc::new(WsClient::new(
+                "bybit_linear",
+                bybit_cfg.clone(),
+                ingest_metrics.clone(),
+                Some(app_cfg),
+            )))
+        } else {
+            None
+        };
+
+        Ok((
+            ws_limiters,
+            binance_linear_ws,
+            hyperliquid_perp_ws,
+            bybit_linear_ws,
+        ))
     }
 }
 

@@ -153,6 +153,7 @@ fn build_limiter(
 pub struct RateLimiterRegistry {
     pub binance_linear: Option<WeightedWindowLimiter>,
     pub hyperliquid_perp: Option<WeightedWindowLimiter>,
+    pub bybit_linear: Option<WeightedWindowLimiter>,
 }
 
 impl RateLimiterRegistry {
@@ -185,9 +186,19 @@ impl RateLimiterRegistry {
             None
         };
 
+        let bybit_linear = if app_cfg.exchange_toggles.bybit_linear {
+            let cfg = exchange_cfgs.bybit_linear.as_ref().ok_or_else(|| {
+                AppError::InvalidConfig("binance_perp enabled but config missing".into())
+            })?;
+            build_limiter(cfg, metrics.clone())
+        } else {
+            None
+        };
+
         Ok(Self {
             binance_linear,
             hyperliquid_perp,
+            bybit_linear,
         })
     }
 
@@ -217,6 +228,7 @@ impl RateLimiterRegistry {
         Ok(match exchange {
             "binance_linear" => self.binance_linear.as_ref(),
             "hyperliquid_perp" => self.hyperliquid_perp.as_ref(),
+            "bybit_linear" => self.bybit_linear.as_ref(),
             _ => {
                 return Err(AppError::InvalidConfig(format!(
                     "Unknown exchange key '{}' for rate limiter registry",

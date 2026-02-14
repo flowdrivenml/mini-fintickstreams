@@ -13,7 +13,9 @@ use crate::ingest::datamap::event::MarketEvent;
 use crate::ingest::datamap::sources::binance_linear::types::{
     BinanceLinearDepthSnapshot, BinanceLinearFundingRateSnapshot, BinanceLinearOpenInterestSnapshot,
 };
+use crate::ingest::datamap::sources::bybit_linear::types::BybitLinearDepthSnapshot;
 use crate::ingest::datamap::sources::hyperliquid_perp::types::HyperliquidPerpDepthSnapshot;
+use crate::ingest::datamap::traits::FromJsonStr;
 use crate::ingest::spec::types::HttpRequestSpec;
 use crate::ingest::traits::MapToEvents;
 use crate::redis::fields::as_publish_fields;
@@ -556,6 +558,81 @@ pub async fn http_hyperliquid_perp_depth_snap(
 
     if std::env::var_os("APP_TEST_ONESHOT").is_some() {
         println!("{:?}", events);
+        tracing::info!("APP_TEST_ONESHOT set: The test worked fine");
+    }
+
+    Ok(())
+}
+
+pub async fn http_bybit_linear_depth_snap(
+    runtime: &AppRuntime,
+    http_spec: HttpRequestSpec,
+    map_ctx: MapCtx,
+    map_envelope: MapEnvelope,
+    symbol: String,
+) -> AppResult<()> {
+    let exchange = ExchangeId::BybitLinear;
+    let transport = StreamTransport::HttpPoll;
+    let kind = StreamKind::L2Book;
+
+    let deps = runtime.deps.clone();
+
+    let api_client = runtime
+        .deps
+        .as_ref()
+        .bybit_linear_client
+        .clone()
+        .ok_or_else(|| AppError::Disabled("Bybit Linear exchange is disabled!".into()))?;
+
+    let knobs: StreamKnobs = crate::app::StreamKnobs::from_deps(deps.clone());
+
+    // 1) Fetch once
+    // let snap: BybitLinearDepthSnapshot = api_client.execute_json(&http_spec).await?;
+    let resp = api_client.execute(&http_spec).await?;
+    let body = resp.text().await.map_err(AppError::Reqwest)?;
+    let snap = BybitLinearDepthSnapshot::from_json_str(&body)?;
+
+    // 2) Map to events
+    let events = snap.map_to_events(&map_ctx, Some(map_envelope))?;
+    let batch_size = events.len();
+
+    // 3) Convert events -> DB rows (one-shot)
+    let depth_db_rows: Vec<DepthDeltaDBRow> = events
+        .iter()
+        .filter_map(|e| match e {
+            MarketEvent::DepthDelta(d) => Some(DepthDeltaDBRow::from(d.clone())),
+            _ => None,
+        })
+        .collect();
+
+    // 4) Publish to redis (optional)
+    if !knobs.disable_redis_publishes {
+        for e in &events {
+            if let Some((kind, ex, sym, fields)) = e.as_redis_publish() {
+                let fields_ref = as_publish_fields(&fields);
+                deps.redis_publish(ex, sym, kind, &fields_ref).await?;
+            }
+        }
+    }
+
+    // 5) Write to DB (optional)
+    if !knobs.disable_db_writes && !depth_db_rows.is_empty() {
+        let writer_cfg = match runtime.deps.as_ref().db.as_ref() {
+            Some(db) => db.cfg.writer.clone(),
+            None => WriterConfig::default(),
+        };
+
+        let mut batch =
+            make_empty_batch::<DepthDeltaDBRow>(exchange, transport, kind, symbol, writer_cfg)?;
+        batch.flush_rows = batch_size; // insert everything for the first full snapshot
+        batch.hard_cap_rows = batch_size * 5;
+
+        batch.rows.extend(depth_db_rows);
+        deps.db_write((&mut batch).into()).await?;
+    }
+
+    if std::env::var_os("APP_TEST_ONESHOT").is_some() {
+        println!("{:?}", events.iter().take(5).collect::<Vec<_>>());
         tracing::info!("APP_TEST_ONESHOT set: The test worked fine");
     }
 

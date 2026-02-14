@@ -3,7 +3,9 @@ use std::fs;
 
 use crate::error::{AppError, AppResult};
 use crate::ingest::datamap::sources::binance_linear::types::BinanceLinearExchangeInfoSnapshot;
+use crate::ingest::datamap::sources::bybit_linear::types::BybitLinearExchangeInfoSnapshot;
 use crate::ingest::datamap::sources::hyperliquid_perp::types::HyperliquidPerpInfoSnapshot;
+use crate::ingest::datamap::traits::FromJsonStr;
 
 /// Reads the bundled testdata snapshot and returns unique `contractType` values.
 pub fn inspect_binance_linear_contract_types_from_testdata() -> AppResult<BTreeSet<String>> {
@@ -43,6 +45,21 @@ pub fn inspect_hyperliquid_perp_info_from_testdata() -> AppResult<BTreeSet<Strin
     Ok(margin_modes)
 }
 
+pub fn inspect_bybit_linear_info_from_testdata() -> AppResult<BTreeSet<String>> {
+    let path = "src/ingest/datamap/testdata/BybitLinearExchangeInfoSnapshot.json";
+    let s = fs::read_to_string(path).map_err(AppError::ConfigIo)?;
+
+    // ✅ unwraps { retCode, retMsg, result: {...} } and returns the inner result
+    let snapshot = BybitLinearExchangeInfoSnapshot::from_json_str(&s)?;
+
+    let mut contract_types = BTreeSet::new();
+    for inst in snapshot.instruments {
+        contract_types.insert(inst.contract_type);
+    }
+
+    Ok(contract_types)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -71,5 +88,15 @@ mod tests {
         }
         Ok(())
     }
-}
 
+    #[test]
+    fn inspect_bybit_linear_contract_types() -> AppResult<()> {
+        let types = inspect_bybit_linear_info_from_testdata()?;
+        // deterministic order because BTreeSet
+        println!("Unique Bybit Linear contractType values:");
+        for t in &types {
+            println!("  - {t}");
+        }
+        Ok(())
+    }
+}

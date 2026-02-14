@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS mini_fintickstreams.stream_registry (
   created_at  timestamptz NOT NULL DEFAULT now(),
   updated_at  timestamptz NOT NULL DEFAULT now(),
 
-  CONSTRAINT exchange_valid CHECK (exchange IN ('binance_linear','hyperliquid_perp')),
+  CONSTRAINT exchange_valid CHECK (exchange IN ('binance_linear','hyperliquid_perp', 'bybit_linear')),
   CONSTRAINT transport_valid CHECK (transport IN ('ws','api')),
   CONSTRAINT kind_valid CHECK (kind IN (
     'Trades','L2Book','Ticker','Funding','OpenInterest','Liquidations','FundingOpenInterest'

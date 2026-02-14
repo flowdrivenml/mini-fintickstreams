@@ -1,0 +1,92 @@
+timezone = "UTC"
+exchange = "bybit"
+margin   = "linear"
+api_pool = "bybit_linear"
+
+# --------------------------------------------------
+# REST API
+# --------------------------------------------------
+api_base_url = "https://api.bybit.com"
+# --------------------------------------------------
+# Global IP limit (Bybit: 600 requests / 5 seconds per IP)
+# --------------------------------------------------
+max_weight = 600
+window = 5
+
+# --------------------------------------------------
+# Per-endpoint dynamic rate limit (UID-based)
+# --------------------------------------------------
+api_weight_header_key = "x-bapi-limit-status"
+api_remaining_header_key = "x-bapi-limit-status"
+api_limit_header_key     = "x-bapi-limit"
+api_reset_header_key     = "x-bapi-limit-reset-timestamp"
+
+# --------------------------------------------------
+# WebSocket
+# --------------------------------------------------
+
+ws_base_url = "wss://stream.bybit.com/v5/public/linear"
+ws_connection_timeout_seconds = 8640000
+ws_max_streams_per_connection = 10
+
+ws_heartbeat_type = "ping"
+ws_heartbeat_timeout_seconds = 20
+ws_heartbeat_frame = { op = "ping" }
+
+ws_reconnect_attempts_limit = 300
+ws_reconnect_attempts_reset_seconds = 300
+
+ws_subscribe_attempt_limit = 10
+ws_subscribe_attempts_reset_seconds = 1
+
+ws_subscribe_msg   = { req_id = "<stream_id>", op = "subscribe",   args = ["<stream_title>"] }
+ws_unsubscribe_msg = { req_id = "<stream_id>", op = "unsubscribe", args = ["<stream_title>"] }
+
+# --------------------------------------------------
+# REST endpoints (V5)
+# --------------------------------------------------
+
+[api.ping]
+endpoint = "/v5/market/time"
+weight = 1
+params = {}
+interval_seconds = 1000000000000
+method = "GET"
+
+[api.server_time]
+endpoint = "/v5/market/time"
+weight = 1
+params = {}
+interval_seconds = 100000000000
+method = "GET"
+
+[api.exchange_info]
+endpoint = "/v5/market/instruments-info"
+weight = 1
+params = { category = "linear" }
+interval_seconds = 100000000000
+method = "GET"
+
+[api.depth]
+endpoint = "/v5/market/orderbook"
+weight = 1
+params = { category = "linear", symbol = "<symbol>", limit = 1000 }
+interval_seconds = 100000000000
+method = "GET"
+
+# --------------------------------------------------
+# WebSocket streams (V5 Public Linear)
+# --------------------------------------------------
+
+[ws.depth_update]
+stream_title = "orderbook.1000.<symbol>"
+
+[ws.trades]
+stream_title = "publicTrade.<symbol>"
+
+[ws.liquidations]
+stream_title = "allLiquidation.<symbol>"
+
+[ws.oi_funding]
+stream_title = "tickers.<symbol>"
+

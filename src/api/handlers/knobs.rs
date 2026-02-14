@@ -18,6 +18,7 @@ fn parse_exchange_id(exchange_str: &str) -> Result<ExchangeId, AppError> {
     match normalized.as_str() {
         "binancelinear" => Ok(ExchangeId::BinanceLinear),
         "hyperliquidperp" => Ok(ExchangeId::HyperliquidPerp),
+        "bybitlinear" => Ok(ExchangeId::BybitLinear),
         other => Err(AppError::InvalidArgument(format!(
             "unknown exchange: {other}"
         ))),

@@ -500,36 +500,30 @@ impl AppRuntime {
         id: &StreamId,
         enabled: bool,
     ) -> AppResult<bool> {
-        // Dealing with database registry
         let spec = self
             .state
-            .stream_spec(&id)
+            .stream_spec(id)
             .await
             .ok_or_else(|| AppError::StreamNotFound(id.to_string()))?;
+
         let db = self
             .deps
             .db
             .as_ref()
             .ok_or_else(|| AppError::Disabled("db_unavailable".into()))?;
+
         let mut knobs = self
             .state
             .stream_knobs_snapshot(id)
             .await
             .ok_or_else(|| AppError::StreamNotFound(id.to_string()))?;
-        knobs.disable_db_writes = false;
+
+        // ✅ FIX
+        knobs.disable_db_writes = !enabled;
 
         db.handler.update_stream_knobs(&spec, &knobs).await?;
 
-        let res = self.state.set_db_writes_enabled(id, enabled).await;
-        match &res {
-            Ok(changed) => info!(
-                component = "knobs",
-                changed = *changed,
-                "db_writes_enabled updated"
-            ),
-            Err(e) => warn!(component = "knobs", error = %e, "db_writes_enabled update failed"),
-        }
-        res
+        self.state.set_db_writes_enabled(id, enabled).await
     }
 
     #[instrument(
@@ -545,33 +539,28 @@ impl AppRuntime {
     ) -> AppResult<bool> {
         let spec = self
             .state
-            .stream_spec(&id)
+            .stream_spec(id)
             .await
             .ok_or_else(|| AppError::StreamNotFound(id.to_string()))?;
+
         let db = self
             .deps
             .db
             .as_ref()
             .ok_or_else(|| AppError::Disabled("db_unavailable".into()))?;
+
         let mut knobs = self
             .state
             .stream_knobs_snapshot(id)
             .await
             .ok_or_else(|| AppError::StreamNotFound(id.to_string()))?;
-        knobs.disable_redis_publishes = false;
+
+        // ✅ FIX
+        knobs.disable_redis_publishes = !enabled;
+
         db.handler.update_stream_knobs(&spec, &knobs).await?;
-        let res = self.state.set_redis_publishes_enabled(id, enabled).await;
-        match &res {
-            Ok(changed) => info!(
-                component = "knobs",
-                changed = *changed,
-                "redis_publishes_enabled updated"
-            ),
-            Err(e) => {
-                warn!(component = "knobs", error = %e, "redis_publishes_enabled update failed")
-            }
-        }
-        res
+
+        self.state.set_redis_publishes_enabled(id, enabled).await
     }
 
     #[instrument(
@@ -838,7 +827,11 @@ impl AppRuntime {
     ) -> AppResult<Vec<RuntimeLimiterInfo>> {
         let exchanges: Vec<ExchangeId> = match exchange {
             Some(e) => vec![e],
-            None => vec![ExchangeId::BinanceLinear, ExchangeId::HyperliquidPerp],
+            None => vec![
+                ExchangeId::BinanceLinear,
+                ExchangeId::HyperliquidPerp,
+                ExchangeId::BybitLinear,
+            ],
         };
 
         let mut out = Vec::with_capacity(exchanges.len());

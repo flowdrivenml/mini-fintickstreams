@@ -130,6 +130,18 @@ pub async fn start_stream(
                         )
                         .await
                     }
+                    "bybit_linear" => {
+                        crate::app::control::ws::ws_bybitlinear_trades(
+                            app,
+                            ctx,
+                            map_ctx,
+                            map_envelope,
+                            spec.clone(),
+                            p.symbol.clone(),
+                            id,
+                        )
+                        .await
+                    }
                     _ => Err(AppError::Internal("Unsupported Exchange".to_string())),
                 },
 
@@ -180,12 +192,49 @@ pub async fn start_stream(
                         )
                         .await
                     }
+                    "bybit_linear" => {
+                        let http_ctx =
+                            ctx_with_symbol(p.exchange, StreamTransport::HttpPoll, &p.symbol);
+                        let ep = resolve_api_endpoint(&deps.exchange_cfgs, p.exchange, spec.kind)?;
+                        let reqspec = resolve_http_request(&ep, &http_ctx, http_placement)?;
+                        // Snap the whole orderbook at the current moment via API
+                        crate::app::control::httppoll::http_bybit_linear_depth_snap(
+                            app,
+                            reqspec,
+                            map_ctx.clone(),
+                            map_envelope.clone(),
+                            p.symbol.clone(),
+                        )
+                        .await?;
+                        crate::app::control::ws::ws_bybitlinear_depth(
+                            app,
+                            ctx,
+                            map_ctx,
+                            map_envelope,
+                            spec.clone(),
+                            p.symbol.clone(),
+                            id,
+                        )
+                        .await
+                    }
                     _ => Err(AppError::Internal("Unsupported Exchange".to_string())),
                 },
 
                 StreamKind::Liquidations => match p.exchange.as_str() {
                     "binance_linear" => {
                         crate::app::control::ws::ws_binancelinear_liquidation(
+                            app,
+                            ctx,
+                            map_ctx,
+                            map_envelope,
+                            spec.clone(),
+                            p.symbol.clone(),
+                            id,
+                        )
+                        .await
+                    }
+                    "bybit_linear" => {
+                        crate::app::control::ws::ws_bybitlinear_liquidation(
                             app,
                             ctx,
                             map_ctx,
@@ -215,6 +264,18 @@ pub async fn start_stream(
                         )
                         .await
                     }
+                    "bybit_linear" => {
+                        crate::app::control::ws::ws_bybitlinear_oifunding(
+                            app,
+                            ctx,
+                            map_ctx,
+                            map_envelope,
+                            spec.clone(),
+                            p.symbol.clone(),
+                            id,
+                        )
+                        .await
+                    }
                     _ => Err(AppError::Internal("Unsupported Exchange".to_string())),
                 },
 
@@ -226,6 +287,9 @@ pub async fn start_stream(
                     "hyperliquid_perp" => Err(AppError::Internal(
                         "hyperliquid_perp: use FundingOpenInterest (combined) stream kind"
                             .to_string(),
+                    )),
+                    "bybit_linear" => Err(AppError::Internal(
+                        "bybit_linear: use FundingOpenInterest (combined) stream kind".to_string(),
                     )),
                     _ => Err(AppError::Internal("Unsupported Exchange".to_string())),
                 },

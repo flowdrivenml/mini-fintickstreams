@@ -115,6 +115,19 @@ impl StreamKind {
             (HyperliquidPerp, Ws, Trades) => "trades",
             (HyperliquidPerp, Ws, FundingOpenInterest) => "oi_funding",
 
+            // --------------------------
+            // Bybit Linear — HTTP
+            // --------------------------
+            (BybitLinear, HttpPoll, L2Book) => "depth",
+
+            // --------------------------
+            // Bybit Linear — WS
+            // --------------------------
+            (BybitLinear, Ws, L2Book) => "depth_update",
+            (BybitLinear, Ws, Trades) => "trades",
+            (BybitLinear, Ws, FundingOpenInterest) => "oi_funding",
+            (BybitLinear, Ws, Liquidations) => "liquidations",
+
             // Unsupported
             _ => {
                 return Err(AppError::InvalidConfig(format!(
@@ -132,6 +145,7 @@ impl ExchangeId {
         match self {
             ExchangeId::BinanceLinear => "binance_linear",
             ExchangeId::HyperliquidPerp => "hyperliquid_perp",
+            ExchangeId::BybitLinear => "bybit_linear",
         }
     }
 }
@@ -149,6 +163,7 @@ impl FromStr for ExchangeId {
         match s {
             "binance_linear" => Ok(Self::BinanceLinear),
             "hyperliquid_perp" => Ok(Self::HyperliquidPerp),
+            "bybit_linear" => Ok(Self::BybitLinear),
             _ => Err(AppError::InvalidArgument(format!(
                 "invalid ExchangeId: {s}"
             ))),
@@ -193,6 +208,7 @@ impl ParamPlacement {
         match exchange {
             ExchangeId::BinanceLinear => Self::Query,
             ExchangeId::HyperliquidPerp => Self::JsonBody,
+            ExchangeId::BybitLinear => Self::Query,
         }
     }
 
@@ -221,6 +237,9 @@ pub fn ctx_with_symbol(exchange: ExchangeId, transport: StreamTransport, symbol:
         }
         ExchangeId::HyperliquidPerp => {
             ctx.insert("coin".into(), normalized_symbol);
+        }
+        ExchangeId::BybitLinear => {
+            ctx.insert("symbol".into(), normalized_symbol);
         }
     }
 
@@ -253,6 +272,10 @@ pub fn resolve_api_endpoint(
             .hyperliquid_perp
             .as_ref()
             .ok_or_else(|| AppError::InvalidConfig("missing hyperliquid_perp config".into()))?,
+        ExchangeId::BybitLinear => configs
+            .bybit_linear
+            .as_ref()
+            .ok_or_else(|| AppError::InvalidConfig("missing bybit_linear config".into()))?,
     };
 
     // 2) compute the endpoint key for HTTP
@@ -295,6 +318,10 @@ pub fn resolve_ws_stream(
             .hyperliquid_perp
             .as_ref()
             .ok_or_else(|| AppError::InvalidConfig("missing hyperliquid_perp config".into()))?,
+        ExchangeId::BybitLinear => configs
+            .bybit_linear
+            .as_ref()
+            .ok_or_else(|| AppError::InvalidConfig("missing bybit_linear config".into()))?,
     };
 
     // 2) compute the endpoint key for WS
@@ -602,5 +629,207 @@ mod tests {
         );
 
         println!("\n================= DONE =================");
+    }
+
+    #[cfg(test)]
+    mod bybit_linear_tests {
+        use super::*;
+        use crate::app::config::load_app_config;
+        use crate::app::stream_types::{ExchangeId, StreamKind, StreamTransport};
+        use crate::error::AppError;
+        use crate::ingest::config::ExchangeConfigs;
+        use std::str::FromStr;
+
+        #[test]
+        fn stream_module_smoke_test_real_configs_bybit_linear() {
+            let app_cfgs = load_app_config(false, 0).unwrap();
+            let exchange_cfgs = ExchangeConfigs::new(&app_cfgs, false, 0).unwrap();
+
+            println!("================= CONFIG LOADED (BYBIT) =================");
+            println!(
+                "bybit_linear loaded: {}",
+                exchange_cfgs.bybit_linear.is_some()
+            );
+            assert!(
+                exchange_cfgs.bybit_linear.is_some(),
+                "bybit_linear config must exist for this test"
+            );
+
+            // -----------------------------
+            // 1) endpoint_key mappings
+            // -----------------------------
+            println!("\n================= ENDPOINT KEY MAPPINGS (BYBIT) =================");
+
+            let supported = [
+                // Bybit HTTP
+                (
+                    ExchangeId::BybitLinear,
+                    StreamTransport::HttpPoll,
+                    StreamKind::L2Book,
+                    "depth", // adjust if your bybit HTTP depth key is named differently
+                ),
+                // Bybit WS
+                (
+                    ExchangeId::BybitLinear,
+                    StreamTransport::Ws,
+                    StreamKind::L2Book,
+                    "depth_update",
+                ),
+                (
+                    ExchangeId::BybitLinear,
+                    StreamTransport::Ws,
+                    StreamKind::Trades,
+                    "trades",
+                ),
+                (
+                    ExchangeId::BybitLinear,
+                    StreamTransport::Ws,
+                    StreamKind::Liquidations,
+                    "liquidations",
+                ),
+                (
+                    ExchangeId::BybitLinear,
+                    StreamTransport::Ws,
+                    StreamKind::FundingOpenInterest,
+                    "oi_funding",
+                ),
+            ];
+
+            for (ex, tr, kind, expected_key) in supported {
+                let key = kind.endpoint_key(ex, tr).unwrap();
+                println!(
+                    "[OK] exchange={:?}, transport={:?}, kind={:?} => key='{}'",
+                    ex, tr, kind, key
+                );
+                assert_eq!(key, expected_key);
+            }
+
+            // -----------------------------
+            // 2) Display / FromStr roundtrip
+            // -----------------------------
+            println!("\n================= PARSE + DISPLAY ROUNDTRIP (BYBIT) =================");
+
+            let ex = ExchangeId::from_str("bybit_linear").unwrap();
+            println!("ExchangeId: 'bybit_linear' -> {:?} -> '{}'", ex, ex);
+            assert_eq!(ex.to_string(), "bybit_linear");
+
+            // -----------------------------
+            // 3) ParamPlacement rules
+            // -----------------------------
+            println!("\n================= PARAM PLACEMENT (BYBIT) =================");
+
+            let p = ParamPlacement::for_exchange(ExchangeId::BybitLinear);
+            println!("ParamPlacement BybitLinear -> {:?}", p);
+
+            // Most setups use Query for Bybit REST; if your code uses JsonBody, change this.
+            assert_eq!(p, ParamPlacement::Query);
+
+            let p_s = ParamPlacement::for_exchange_str("bybit_linear").unwrap();
+            println!("ParamPlacement str 'bybit_linear' -> {:?}", p_s);
+            assert_eq!(p_s, ParamPlacement::Query);
+
+            // -----------------------------
+            // 4) ctx_with_symbol normalization
+            // -----------------------------
+            println!("\n================= CTX SYMBOL NORMALIZATION (BYBIT) =================");
+
+            let symbol_in = "BtCuSdT";
+
+            // HTTP Bybit -> typically UPPER, key "symbol"
+            let ctx = ctx_with_symbol(
+                ExchangeId::BybitLinear,
+                StreamTransport::HttpPoll,
+                symbol_in,
+            );
+            println!("HTTP Bybit ctx: {:?}", ctx);
+            assert_eq!(ctx.get("symbol").map(|s| s.as_str()), Some("BTCUSDT"));
+            assert!(ctx.get("coin").is_none());
+
+            // WS Bybit -> should be UPPER, key "symbol" (important for topic like publicTrade.BTCUSDT)
+            let ctx = ctx_with_symbol(ExchangeId::BybitLinear, StreamTransport::Ws, symbol_in);
+            println!("WS Bybit ctx: {:?}", ctx);
+            assert_eq!(ctx.get("symbol").map(|s| s.as_str()), Some("BTCUSDT"));
+            assert!(ctx.get("coin").is_none());
+
+            // str wrapper
+            let ctx = ctx_with_symbol_str("bybit_linear", StreamTransport::Ws, symbol_in).unwrap();
+            println!("WS Bybit ctx (str): {:?}", ctx);
+            assert_eq!(ctx.get("symbol").map(|s| s.as_str()), Some("BTCUSDT"));
+
+            // -----------------------------
+            // 5) resolve_api_endpoint (real config lookup)
+            // -----------------------------
+            println!("\n================= RESOLVE API ENDPOINTS (BYBIT) =================");
+
+            let api_cases = [(ExchangeId::BybitLinear, StreamKind::L2Book)];
+
+            for (ex, kind) in api_cases {
+                let ep = resolve_api_endpoint(&exchange_cfgs, ex, kind).unwrap();
+                let key = kind.endpoint_key(ex, StreamTransport::HttpPoll).unwrap();
+
+                println!(
+                    "[API] exchange={:?}, kind={:?}, key='{}' => method='{}' endpoint='{}' weight={} interval={} params_present={}",
+                    ex,
+                    kind,
+                    key,
+                    ep.method,
+                    ep.endpoint,
+                    ep.weight,
+                    ep.interval_seconds,
+                    ep.params.is_some()
+                );
+
+                assert!(!ep.endpoint.is_empty());
+                assert!(!ep.method.is_empty());
+            }
+
+            // _str variant smoke
+            let ep = resolve_api_endpoint_str(&exchange_cfgs, "bybit_linear", StreamKind::L2Book)
+                .unwrap();
+            println!(
+                "[API str] bybit_linear L2Book => {} {}",
+                ep.method, ep.endpoint
+            );
+            assert!(!ep.endpoint.is_empty());
+
+            // -----------------------------
+            // 6) resolve_ws_stream (real config lookup)
+            // -----------------------------
+            println!("\n================= RESOLVE WS STREAMS (BYBIT) =================");
+
+            let ws_cases = [
+                (ExchangeId::BybitLinear, StreamKind::L2Book),
+                (ExchangeId::BybitLinear, StreamKind::Trades),
+                (ExchangeId::BybitLinear, StreamKind::Liquidations),
+                (ExchangeId::BybitLinear, StreamKind::FundingOpenInterest),
+            ];
+
+            for (ex, kind) in ws_cases {
+                let ws = resolve_ws_stream(&exchange_cfgs, ex, kind).unwrap();
+                let key = kind.endpoint_key(ex, StreamTransport::Ws).unwrap();
+
+                println!(
+                    "[WS] exchange={:?}, kind={:?}, key='{}' => stream_title={:?} coin={:?} subscription_type={:?}",
+                    ex, kind, key, ws.stream_title, ws.coin, ws.subscription_type
+                );
+
+                assert!(
+                    ws.stream_title.is_some()
+                        || ws.coin.is_some()
+                        || ws.subscription_type.is_some(),
+                    "ws stream looks empty for exchange={ex:?} kind={kind:?} key={key}"
+                );
+            }
+
+            // _str variant smoke
+            let ws =
+                resolve_ws_stream_str(&exchange_cfgs, "bybit_linear", StreamKind::Trades).unwrap();
+            println!(
+                "[WS str] bybit_linear Trades => stream_title={:?} coin={:?} subscription_type={:?}",
+                ws.stream_title, ws.coin, ws.subscription_type
+            );
+
+            println!("\n================= DONE (BYBIT) =================");
+        }
     }
 }

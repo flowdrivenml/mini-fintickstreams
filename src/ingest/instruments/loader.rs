@@ -16,7 +16,9 @@ use crate::ingest::spec::resolve::resolve_http_request;
 use crate::ingest::spec::{Ctx, ParamPlacement};
 
 use crate::ingest::datamap::sources::binance_linear::types::BinanceLinearExchangeInfoSnapshot;
+use crate::ingest::datamap::sources::bybit_linear::types::BybitLinearExchangeInfoSnapshot;
 use crate::ingest::datamap::sources::hyperliquid_perp::types::HyperliquidPerpInfoSnapshot;
+use crate::ingest::datamap::traits::FromJsonStr;
 use crate::ingest::instruments::spec::{InstrumentKind, InstrumentSpec, QtyUnit};
 
 /// Loader that owns API clients and knows how to fetch+parse exchange metadata into `InstrumentSpec`s.
@@ -29,6 +31,7 @@ pub struct InstrumentSpecLoader {
 
     binance_client: Option<ApiClient>,
     hyperliquid_client: Option<ApiClient>,
+    bybit_linear_client: Option<ApiClient>,
 }
 
 impl InstrumentSpecLoader {
@@ -61,11 +64,21 @@ impl InstrumentSpecLoader {
             )
         });
 
+        let bybit_linear_client = exchange_configs.bybit_linear.as_ref().map(|bybit| {
+            ApiClient::new(
+                "bybit_exchange_info",
+                bybit.api_base_url.clone(),
+                limiter_registry.clone(),
+                metrics.clone(),
+            )
+        });
+
         Ok(Self {
             ctx,
             exchange_configs,
             binance_client,
             hyperliquid_client,
+            bybit_linear_client,
         })
     }
 
@@ -79,6 +92,10 @@ impl InstrumentSpecLoader {
 
         if self.exchange_configs.hyperliquid_perp.is_some() {
             out.extend(self.load_hyperliquid_perp_instrument_specs().await?);
+        }
+
+        if self.exchange_configs.bybit_linear.is_some() {
+            out.extend(self.load_bybit_linear_instrument_specs().await?);
         }
 
         Ok(out)
@@ -145,6 +162,33 @@ impl InstrumentSpecLoader {
 
         // Exchange-specific parsing (stub for now)
         self.parse_hyperliquid_perp_exchange_info(&json)
+    }
+
+    /// Load Bybit linear exchange info and parse into instrument specs.
+    ///
+    pub async fn load_bybit_linear_instrument_specs(&self) -> AppResult<Vec<InstrumentSpec>> {
+        let hyper = self.exchange_configs.bybit_linear.as_ref().ok_or_else(|| {
+            AppError::InvalidConfig("bybit_linear missing in ExchangeConfigs".into())
+        })?;
+
+        let ep = hyper
+            .api
+            .get("exchange_info")
+            .ok_or_else(|| AppError::InvalidConfig("bybit api.exchange_info missing".into()))?;
+
+        let req_spec = resolve_http_request(ep, &self.ctx, ParamPlacement::Query)?;
+
+        let client = self.bybit_linear_client.as_ref().ok_or_else(|| {
+            AppError::Internal("bybit_linear client not initialized (bybit_linear missing?)".into())
+        })?;
+
+        let resp = client.execute(&req_spec).await?;
+        let body = resp.text().await.map_err(AppError::Reqwest)?;
+
+        let json = BybitLinearExchangeInfoSnapshot::from_json_str(&body)?;
+
+        // Exchange-specific parsing (stub for now)
+        self.parse_bybit_linear_exchange_info(json)
     }
 
     // ------------------------------------------------------------------------
@@ -246,6 +290,69 @@ impl InstrumentSpecLoader {
 
         Ok(out)
     }
+
+    fn parse_bybit_linear_exchange_info(
+        &self,
+        snapshot: BybitLinearExchangeInfoSnapshot,
+    ) -> AppResult<Vec<InstrumentSpec>> {
+        // Bybit REST is wrapped: { retCode, retMsg, result: { category, list } }
+        // let s = serde_json::to_string(json).map_err(AppError::Json)?;
+        // let snapshot: BybitLinearExchangeInfoSnapshot =
+        //     BybitLinearExchangeInfoSnapshot::from_json_str(&s)?;
+
+        let mut out = Vec::with_capacity(snapshot.instruments.len());
+
+        for inst in snapshot.instruments {
+            // Skip non-trading instruments
+            if inst.status != "Trading" {
+                continue;
+            }
+
+            let (kind, delivery_date_ms) = match inst.contract_type.as_str() {
+                "LinearPerpetual" => (InstrumentKind::PerpLinear, None),
+
+                "LinearFutures" => {
+                    // deliveryTime is string milliseconds
+                    let delivery = inst.delivery_time_ms.parse::<u64>().map_err(|e| {
+                        AppError::Internal(format!(
+                            "failed to parse deliveryTime for {}: {e}",
+                            inst.symbol
+                        ))
+                    })?;
+
+                    (InstrumentKind::FutureLinear, Some(delivery))
+                }
+
+                other => {
+                    return Err(AppError::Internal(format!(
+                        "unknown Bybit linear contractType='{other}' for symbol={}",
+                        inst.symbol
+                    )));
+                }
+            };
+
+            // Bybit publicTrade reports size in BASE units
+            let reported_qty_unit = QtyUnit::Base;
+
+            // Per your rule: contract_size always 1
+            let contract_size = Some(1.0_f64);
+
+            // launchTime exists in payload (string ms)
+            let onboard_date_ms = inst.launch_time_ms.parse::<u64>().ok();
+
+            out.push(InstrumentSpec::new(
+                "bybit_linear",
+                inst.symbol,
+                kind,
+                reported_qty_unit,
+                contract_size,
+                delivery_date_ms,
+                onboard_date_ms,
+            )?);
+        }
+
+        Ok(out)
+    }
 }
 
 #[cfg(test)]
@@ -304,6 +411,27 @@ mod tests {
             "Expected at least one FutureLinear instrument"
         );
 
+        Ok(())
+    }
+    #[tokio::test]
+    async fn bybit_linear_loads_and_parses_non_empty() -> AppResult<()> {
+        let appconfig = load_app_config(false, 0)?;
+        let exchangeconfigs = ExchangeConfigs::new(&appconfig, false, 0)?;
+
+        // build loader (no limiter/metrics)
+        let loader = InstrumentSpecLoader::new(exchangeconfigs, None, None)?;
+
+        // call the bybit loader directly
+        let specs = loader.load_bybit_linear_instrument_specs().await?;
+
+        // small print for sanity (run with -- --nocapture)
+        println!(
+            "Bybit linear: loaded {} instrument specs. First: {:?}",
+            specs.len(),
+            specs.first()
+        );
+
+        assert!(!specs.is_empty());
         Ok(())
     }
 }

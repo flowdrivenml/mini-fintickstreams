@@ -3,9 +3,11 @@ pub mod instruments_axum;
 pub mod knobs;
 pub mod limiters;
 pub mod streams;
+pub mod ui;
 
 pub use health::*;
 pub use instruments_axum::*;
 pub use knobs::*;
 pub use limiters::*;
 pub use streams::*;
+pub use ui::*;

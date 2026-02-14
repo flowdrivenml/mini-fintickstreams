@@ -26,6 +26,7 @@ pub async fn get_limiters(
             match normalized.as_str() {
                 "binancelinear" => Some(ExchangeId::BinanceLinear),
                 "hyperliquidperp" => Some(ExchangeId::HyperliquidPerp),
+                "bybitlinear" => Some(ExchangeId::BybitLinear),
                 _ => {
                     return (StatusCode::BAD_REQUEST, format!("unknown exchange '{s}'"))
                         .into_response();

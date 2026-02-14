@@ -46,6 +46,7 @@ pub struct ScalesConfig {
 pub struct ExchangeToggles {
     pub binance_linear: bool,
     pub hyperliquid_perp: bool,
+    pub bybit_linear: bool,
 }
 
 #[derive(Debug, Deserialize)]

@@ -539,3 +539,98 @@ async fn spawn_local_ws_server_silent_listener(listener: TcpListener) -> AppResu
         });
     }
 }
+
+fn mk_ctx_btc_bybit() -> Ctx {
+    let mut ctx = Ctx::new();
+    ctx.insert("symbol".to_string(), "BTCUSDT".to_string());
+    ctx
+}
+
+#[tokio::test]
+async fn test_live_ws_bybit_linear_trades_no_limiter_10_messages() -> AppResult<()> {
+    crate::telemetry::init_for_tests();
+
+    let appcfg = load_app_config(false, 0)?;
+    let ex = ExchangeConfigs::new(&appcfg, false, 0)?;
+    let cfg = ex
+        .bybit_linear
+        .as_ref()
+        .expect("bybit_linear config must exist in this test");
+    let stream = cfg
+        .ws
+        .get("trades")
+        .expect("missing [ws.trades] in bybit config");
+
+    let client = WsClient::new("bybit_linear", cfg.clone(), None, None);
+
+    let ctx = mk_ctx_btc_bybit();
+    let mut hook: WsTestHook = WsTestHook {
+        max_reconnect_attempts: Some(5),
+        ..Default::default()
+    };
+
+    let res = client
+        .run_stream(
+            None, // no limiter
+            stream,
+            ctx,
+            stop_after_n_text_messages(5).await,
+            Some(&mut hook),
+            None,
+        )
+        .await;
+
+    match res {
+        Err(e) if is_test_done(&e) => Ok(()),
+        other => other,
+    }
+}
+
+#[tokio::test]
+async fn test_live_ws_bybit_linear_trades_with_limiters_10_messages() -> AppResult<()> {
+    crate::telemetry::init_for_tests();
+
+    let appcfg = load_app_config(false, 0)?;
+    let ex = ExchangeConfigs::new(&appcfg, false, 0)?;
+    let cfg = ex
+        .bybit_linear
+        .as_ref()
+        .expect("bybit_linear config must exist in this test");
+    let stream = cfg
+        .ws
+        .get("trades")
+        .expect("missing [ws.trades] in bybit config");
+
+    let cfgs = ExchangeConfigs::new(&appcfg, false, 0)?;
+    let ws_limiters = WsLimiterRegistry::new(&appcfg, &cfgs, None)?;
+
+    let client = WsClient::new("bybit_linear", cfg.clone(), None, None);
+
+    let ctx = mk_ctx_btc_bybit();
+    let mut hook: WsTestHook = WsTestHook {
+        max_reconnect_attempts: Some(5),
+        ..Default::default()
+    };
+
+    let res = client
+        .run_stream(
+            Some(&ws_limiters), // limiter enabled
+            stream,
+            ctx,
+            stop_after_n_text_messages(10).await,
+            Some(&mut hook),
+            None,
+        )
+        .await;
+
+    println!(
+        "[test] reconnect attempts observed = {}",
+        hook.reconnect_attempts
+    );
+    println!("[test] disconnect reasons = {:?}", hook.disconnects);
+
+    match res {
+        Err(e) if is_test_done(&e) => Ok(()),
+        other => other,
+    }
+}

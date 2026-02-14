@@ -20,6 +20,9 @@ pub struct ExchangeConfig {
     pub max_weight: Option<u64>,
     pub window: u64,
     pub api_weight_header_key: String,
+    pub api_remaining_header_key: Option<String>,
+    pub api_limit_header_key: Option<String>,
+    pub api_reset_header_key: Option<String>,
 
     // WebSocket
     pub ws_base_url: String,
@@ -95,16 +98,23 @@ pub enum StringOrTable {
 // -----------------------------
 pub fn load_exchange_config(name: &str, from_env: bool, version: u32) -> AppResult<ExchangeConfig> {
     // local (dev) paths
-    const LOCAL_BINANCE: &str = "src/config/binance_linear.toml";
-    const LOCAL_HL: &str = "src/config/hyperliquid_perp.toml";
+    const LOCAL_BINANCE_LINEAR: &str = "src/config/binance_linear.toml";
+    const LOCAL_HYPERLIQUID_PERP: &str = "src/config/hyperliquid_perp.toml";
+    const LOCAL_BYBIT_LINEAR: &str = "src/config/bybit_linear.toml";
 
     // k8s default mount paths
-    const K8S_BINANCE: &str = "/etc/mini-fintickstreams/binance_linear.toml";
-    const K8S_HL: &str = "/etc/mini-fintickstreams/hyperliquid_perp.toml";
+    const K8S_BINANCE_LINEAR: &str = "/etc/mini-fintickstreams/binance_linear.toml";
+    const K8S_HYPERLIQUID_PERP: &str = "/etc/mini-fintickstreams/hyperliquid_perp.toml";
+    const K8S_BYBIT_LINEAR: &str = "/etc/mini-fintickstreams/bybit_linear.toml";
 
     let (local_path, k8s_path, env_key_suffix) = match name {
-        "binance_linear" => (LOCAL_BINANCE, K8S_BINANCE, "BINANCE_LINEAR"),
-        "hyperliquid_perp" => (LOCAL_HL, K8S_HL, "HYPERLIQUID_PERP"),
+        "binance_linear" => (LOCAL_BINANCE_LINEAR, K8S_BINANCE_LINEAR, "BINANCE_LINEAR"),
+        "hyperliquid_perp" => (
+            LOCAL_HYPERLIQUID_PERP,
+            K8S_HYPERLIQUID_PERP,
+            "HYPERLIQUID_PERP",
+        ),
+        "bybit_linear" => (LOCAL_BYBIT_LINEAR, K8S_BYBIT_LINEAR, "BYBIT_LINEAR"),
         _ => {
             return Err(AppError::InvalidConfig(format!(
                 "\n❌ UNKNOWN EXCHANGE CONFIG\n\
@@ -235,6 +245,7 @@ pub fn load_exchange_config(name: &str, from_env: bool, version: u32) -> AppResu
 pub struct ExchangeConfigs {
     pub binance_linear: Option<ExchangeConfig>,
     pub hyperliquid_perp: Option<ExchangeConfig>,
+    pub bybit_linear: Option<ExchangeConfig>,
 }
 
 impl ExchangeConfigs {
@@ -242,6 +253,7 @@ impl ExchangeConfigs {
         let mut exchanges = ExchangeConfigs {
             binance_linear: None,
             hyperliquid_perp: None,
+            bybit_linear: None,
         };
 
         if app_cfg.exchange_toggles.binance_linear {
@@ -252,6 +264,9 @@ impl ExchangeConfigs {
         if app_cfg.exchange_toggles.hyperliquid_perp {
             exchanges.hyperliquid_perp =
                 Some(load_exchange_config("hyperliquid_perp", from_env, version)?);
+        }
+        if app_cfg.exchange_toggles.bybit_linear {
+            exchanges.bybit_linear = Some(load_exchange_config("bybit_linear", from_env, version)?);
         }
 
         Ok(exchanges)
@@ -265,6 +280,7 @@ impl ExchangeConfigs {
         match exchange {
             ExchangeId::BinanceLinear => self.binance_linear.as_ref(),
             ExchangeId::HyperliquidPerp => self.hyperliquid_perp.as_ref(),
+            ExchangeId::BybitLinear => self.bybit_linear.as_ref(),
         }
     }
 
@@ -272,6 +288,7 @@ impl ExchangeConfigs {
         match exchange {
             ExchangeId::BinanceLinear => self.binance_linear.as_mut(),
             ExchangeId::HyperliquidPerp => self.hyperliquid_perp.as_mut(),
+            ExchangeId::BybitLinear => self.bybit_linear.as_mut(),
         }
     }
 }
@@ -288,6 +305,9 @@ mod tests {
         let hyper = load_exchange_config("hyperliquid_perp", false, 0)
             .expect("failed to load hyperliquid_perp config");
 
+        let bybit = load_exchange_config("bybit_linear", false, 0)
+            .expect("failed to load bybit_linear config");
+
         println!("\n=== BINANCE LINEAR CONFIG ===");
         println!("{:#?}", binance);
         println!(
@@ -302,6 +322,14 @@ mod tests {
             "exchange={} ws.depth_update={:?}",
             hyper.exchange,
             hyper.ws.get("depth_update")
+        );
+
+        println!("\n=== BYBIT LINEAR CONFIG ===");
+        println!("{:#?}", bybit);
+        println!(
+            "exchange={} ws.depth_update={:?}",
+            bybit.exchange,
+            bybit.ws.get("depth_update")
         );
     }
 }

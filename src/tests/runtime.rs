@@ -46,7 +46,9 @@ async fn run_stream_smoke(
     };
 
     eprintln!("[test] calling add_stream...");
-    rt.add_stream(params).await.expect("add_stream");
+    if let Err(e) = rt.add_stream(params).await {
+        panic!("add_stream failed: {:#}", e);
+    }
     eprintln!("[test] add_stream returned Ok");
 
     assert!(rt.state.contains(&stream_id).await);
@@ -192,6 +194,54 @@ async fn it_adds_stream_hyperliquid_perp_oifunding_ws_smoke() {
     run_stream_smoke(
         ExchangeId::HyperliquidPerp,
         "BTC",
+        StreamKind::FundingOpenInterest,
+        StreamTransport::Ws,
+    )
+    .await;
+}
+
+// -------------------------
+// BYBIT LINEAR (BTCUSDT)
+// -------------------------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn it_adds_stream_bybit_linear_trades_ws_smoke() {
+    run_stream_smoke(
+        ExchangeId::BybitLinear,
+        "BTCUSDT",
+        StreamKind::Trades,
+        StreamTransport::Ws,
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn it_adds_stream_bybit_linear_l2book_ws_smoke() {
+    run_stream_smoke(
+        ExchangeId::BybitLinear,
+        "BTCUSDT",
+        StreamKind::L2Book,
+        StreamTransport::Ws,
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn it_adds_stream_bybit_linear_liquidations_ws_smoke() {
+    run_stream_smoke(
+        ExchangeId::BybitLinear,
+        "BTCUSDT",
+        StreamKind::Liquidations,
+        StreamTransport::Ws,
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn it_adds_stream_bybit_linear_oifunding_ws_smoke() {
+    run_stream_smoke(
+        ExchangeId::BybitLinear,
+        "BTCUSDT",
         StreamKind::FundingOpenInterest,
         StreamTransport::Ws,
     )

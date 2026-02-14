@@ -76,6 +76,31 @@ pub fn list_available_streams() -> Vec<AvailableStream> {
             kind: FundingOpenInterest,
             note: Some("combined OI+Funding stream; request this instead of OI/Funding"),
         },
+        // BYBIT LINEAR
+        AvailableStream {
+            exchange: BybitLinear,
+            transport: Ws,
+            kind: Trades,
+            note: None,
+        },
+        AvailableStream {
+            exchange: BybitLinear,
+            transport: Ws,
+            kind: L2Book,
+            note: Some("will also do an HTTP depth snapshot before WS"),
+        },
+        AvailableStream {
+            exchange: BybitLinear,
+            transport: Ws,
+            kind: FundingOpenInterest,
+            note: Some("combined OI+Funding stream; request this instead of OI/Funding"),
+        },
+        AvailableStream {
+            exchange: BybitLinear,
+            transport: Ws,
+            kind: Liquidations,
+            note: None,
+        },
     ]
 }
 
@@ -108,6 +133,9 @@ pub fn unsupported_reason(
     match (exchange, transport, kind) {
         (HyperliquidPerp, Ws, OpenInterest) | (HyperliquidPerp, Ws, Funding) => {
             Some("hyperliquid_perp: use FundingOpenInterest (combined) stream kind")
+        }
+        (BybitLinear, Ws, Funding) => {
+            Some("bybit_linear: use FundingOpenInterest (combined) stream kind")
         }
         _ => None,
     }

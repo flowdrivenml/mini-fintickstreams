@@ -319,4 +319,45 @@ mod tests {
 
         Ok(())
     }
+
+    #[tokio::test]
+    async fn test_api_call_bybit_linear_depth() -> AppResult<()> {
+        // 1) Load configs
+        let appconfig = load_app_config(false, 0)?;
+        let exchangeconfigs = ExchangeConfigs::new(&appconfig, false, 0)?;
+
+        let bybit = exchangeconfigs.bybit_linear.as_ref().ok_or_else(|| {
+            AppError::InvalidConfig("bybit_linear missing in ExchangeConfigs".into())
+        })?;
+
+        // 2) Build ctx (Bybit HTTP expects uppercase symbol)
+        let mut ctx: Ctx = Ctx::new();
+        ctx.insert("symbol".into(), "BTCUSDT".into());
+
+        // 3) Resolve request spec
+        let depth_ep = bybit
+            .api
+            .get("depth")
+            .ok_or_else(|| AppError::InvalidConfig("bybit api.depth missing".into()))?;
+
+        let spec = resolve_http_request(depth_ep, &ctx, ParamPlacement::Query)?;
+
+        println!("--- resolved bybit depth spec ---");
+        println!(
+            "method={:?} base_url={} path={} query={:?} json_body={:?}",
+            spec.method, bybit.api_base_url, spec.path, spec.query, spec.json_body
+        );
+
+        // 4) Build API client (no limiter/metrics)
+        let client = ApiClient::new("bybit_test", bybit.api_base_url.clone(), None, None);
+
+        // 5) Execute
+        println!("\n--- CALL: Bybit Linear depth ---");
+        let resp = client.execute(&spec).await?;
+        let (status, body) = read_body(resp).await;
+
+        print_http_result("bybit_linear", status, &body);
+
+        Ok(())
+    }
 }

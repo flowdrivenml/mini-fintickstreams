@@ -32,6 +32,7 @@ funding = 1000000000000  # 1e12
 [exchange_toggles]
 binance_linear = true
 hyperliquid_perp = true
+bybit_linear = true
 
 # --------------------------------------------------
 # Stream routing behavior

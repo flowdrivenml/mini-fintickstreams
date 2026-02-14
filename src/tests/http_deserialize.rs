@@ -6,6 +6,9 @@ use crate::ingest::datamap::FromJsonStr;
 use crate::ingest::datamap::sources::binance_linear::types::{
     BinanceLinearDepthSnapshot, BinanceLinearFundingRateSnapshot, BinanceLinearOpenInterestSnapshot,
 };
+use crate::ingest::datamap::sources::bybit_linear::types::{
+    BybitLinearDepthSnapshot, BybitLinearExchangeInfoSnapshot, BybitLinearServerTimeSnapshot,
+};
 use crate::ingest::datamap::sources::hyperliquid_perp::types::HyperliquidPerpDepthSnapshot;
 use crate::ingest::http::api_client::ApiClient;
 use crate::ingest::spec::resolve::resolve_http_request;
@@ -145,6 +148,83 @@ async fn hyperliquid_depth_deserializes() -> AppResult<()> {
 
     let _: HyperliquidPerpDepthSnapshot =
         call_json_dbg("hyperliquid.depth", &client, &spec).await?;
+
+    Ok(())
+}
+
+// tests/api_deserialize.rs (additions for BYBIT)
+
+/* ----------------------------- helpers ----------------------------- */
+/* (keep your existing helpers as-is) */
+
+fn bybit_ctx() -> Ctx {
+    let mut ctx = Ctx::new();
+    // Bybit REST uses symbol like "BTCUSDT" and requires category="linear"
+    ctx.insert("symbol".into(), "BTCUSDT".into());
+    ctx.insert("category".into(), "linear".into());
+    ctx
+}
+
+/* --------------------------- BYBIT: DEPTH --------------------------- */
+
+#[tokio::test]
+async fn bybit_depth_deserializes() -> AppResult<()> {
+    let appconfig = load_app_config(false, 0)?;
+    let exchanges = ExchangeConfigs::new(&appconfig, false, 0)?;
+    let bybit = exchanges.bybit_linear.as_ref().unwrap();
+
+    let ctx = bybit_ctx();
+    let ep = bybit.api.get("depth").unwrap();
+    let spec = resolve_http_request(ep, &ctx, ParamPlacement::Query)?;
+
+    let client = ApiClient::new("bybit_depth_it", bybit.api_base_url.clone(), None, None);
+
+    let _: BybitLinearDepthSnapshot = call_json_dbg("bybit.depth", &client, &spec).await?;
+
+    Ok(())
+}
+
+/* ------------------------ BYBIT: SERVER TIME ------------------------ */
+
+#[tokio::test]
+async fn bybit_server_time_deserializes() -> AppResult<()> {
+    let appconfig = load_app_config(false, 0)?;
+    let exchanges = ExchangeConfigs::new(&appconfig, false, 0)?;
+    let bybit = exchanges.bybit_linear.as_ref().unwrap();
+
+    let ctx = bybit_ctx();
+    let ep = bybit.api.get("server_time").unwrap();
+    let spec = resolve_http_request(ep, &ctx, ParamPlacement::Query)?;
+
+    let client = ApiClient::new("bybit_time_it", bybit.api_base_url.clone(), None, None);
+
+    let _: BybitLinearServerTimeSnapshot =
+        call_json_dbg("bybit.server_time", &client, &spec).await?;
+
+    Ok(())
+}
+
+/* ------------------------ BYBIT: EXCHANGE INFO ---------------------- */
+
+#[tokio::test]
+async fn bybit_exchange_info_deserializes() -> AppResult<()> {
+    let appconfig = load_app_config(false, 0)?;
+    let exchanges = ExchangeConfigs::new(&appconfig, false, 0)?;
+    let bybit = exchanges.bybit_linear.as_ref().unwrap();
+
+    let ctx = bybit_ctx();
+    let ep = bybit.api.get("exchange_info").unwrap();
+    let spec = resolve_http_request(ep, &ctx, ParamPlacement::Query)?;
+
+    let client = ApiClient::new(
+        "bybit_exchange_info_it",
+        bybit.api_base_url.clone(),
+        None,
+        None,
+    );
+
+    let _: BybitLinearExchangeInfoSnapshot =
+        call_json_dbg("bybit.exchange_info", &client, &spec).await?;
 
     Ok(())
 }

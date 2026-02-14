@@ -21,6 +21,9 @@ pub struct WsLimiterRegistry {
 
     pub hyperliquid_perp_subscribe: SubscribeAttemptLimiter,
     pub hyperliquid_perp_reconnect: ReconnectAttemptLimiter,
+
+    pub bybit_linear_subscribe: SubscribeAttemptLimiter,
+    pub bybit_linear_reconnect: ReconnectAttemptLimiter,
 }
 
 impl WsLimiterRegistry {
@@ -51,11 +54,23 @@ impl WsLimiterRegistry {
             ));
         };
 
+        let bybit_cfg = if app_cfg.exchange_toggles.bybit_linear {
+            exchange_cfgs.bybit_linear.as_ref().ok_or_else(|| {
+                AppError::InvalidConfig("bybit_linear enabled but config missing".into())
+            })?
+        } else {
+            return Err(AppError::InvalidConfig(
+                "WsLimiterRegistry expects bybit_linear enabled (or adjust registry to Option fields)".into(),
+            ));
+        };
+
         Ok(Self {
             binance_linear_subscribe: build_ws_subscribe_limiter(binance_cfg, metrics.clone()),
             binance_linear_reconnect: build_ws_reconnect_limiter(binance_cfg, metrics.clone()),
             hyperliquid_perp_subscribe: build_ws_subscribe_limiter(hyper_cfg, metrics.clone()),
             hyperliquid_perp_reconnect: build_ws_reconnect_limiter(hyper_cfg, metrics.clone()),
+            bybit_linear_subscribe: build_ws_subscribe_limiter(bybit_cfg, metrics.clone()),
+            bybit_linear_reconnect: build_ws_reconnect_limiter(bybit_cfg, metrics.clone()),
         })
     }
 
@@ -83,6 +98,7 @@ impl WsLimiterRegistry {
         Ok(match exchange {
             "binance_linear" => &self.binance_linear_subscribe,
             "hyperliquid_perp" => &self.hyperliquid_perp_subscribe,
+            "bybit_linear" => &self.bybit_linear_subscribe,
             _ => {
                 return Err(AppError::InvalidConfig(format!(
                     "Unknown exchange key '{}' for ws limiter registry (subscribe)",
@@ -96,6 +112,7 @@ impl WsLimiterRegistry {
         Ok(match exchange {
             "binance_linear" => &self.binance_linear_reconnect,
             "hyperliquid_perp" => &self.hyperliquid_perp_reconnect,
+            "bybit_linear" => &self.bybit_linear_reconnect,
             _ => {
                 return Err(AppError::InvalidConfig(format!(
                     "Unknown exchange key '{}' for ws limiter registry (reconnect)",

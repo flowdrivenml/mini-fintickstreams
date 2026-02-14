@@ -1,0 +1,88 @@
+{
+  "topic": "tickers.BTCUSDT",
+  "type": "snapshot",
+  "data": {
+    "symbol": "BTCUSDT",
+    "tickDirection": "ZeroMinusTick",
+    "price24hPcnt": "0.047175",
+    "lastPrice": "69027.60",
+    "prevPrice24h": "65917.90",
+    "highPrice24h": "69450.00",
+    "lowPrice24h": "65183.20",
+    "prevPrice1h": "69173.60",
+    "markPrice": "69036.09",
+    "indexPrice": "69076.03",
+    "openInterest": "47287.191",
+    "openInterestValue": "3264522773.72",
+    "turnover24h": "6000301466.6387",
+    "volume24h": "88962.4010",
+    "fundingIntervalHour": "8",
+    "fundingCap": "0.005",
+    "nextFundingTime": "1771027200000",
+    "fundingRate": "-0.00003737",
+    "bid1Price": "69027.60",
+    "bid1Size": "0.003",
+    "ask1Price": "69027.70",
+    "ask1Size": "3.866",
+    "preOpenPrice": "",
+    "preQty": "",
+    "curPreListingPhase": ""
+  },
+  "cs": 530383176732,
+  "ts": 1771012576492
+}
+{
+  "topic": "tickers.BTCUSDT",
+  "type": "delta",
+  "data": {
+    "symbol": "BTCUSDT",
+    "markPrice": "69033.85",
+    "indexPrice": "69073.38",
+    "openInterestValue": "3264416850.42",
+    "bid1Price": "69027.60",
+    "bid1Size": "0.005",
+    "ask1Price": "69027.70",
+    "ask1Size": "3.550"
+  },
+  "cs": 530383177923,
+  "ts": 1771012576592
+}
+{
+  "topic": "tickers.BTCUSDT",
+  "type": "delta",
+  "data": {
+    "symbol": "BTCUSDT",
+    "bid1Price": "69027.60",
+    "bid1Size": "0.034"
+  },
+  "cs": 530383178959,
+  "ts": 1771012576692
+}
+{
+  "topic": "tickers.BTCUSDT",
+  "type": "delta",
+  "data": {
+    "symbol": "BTCUSDT",
+    "price24hPcnt": "0.047613",
+    "prevPrice24h": "65890.30",
+    "prevPrice1h": "69107.40",
+    "turnover24h": "5997844985.4928",
+    "volume24h": "88924.8460",
+    "bid1Price": "69027.60",
+    "bid1Size": "0.005"
+  },
+  "cs": 530383179776,
+  "ts": 1771012576792
+}
+{
+  "topic": "tickers.BTCUSDT",
+  "type": "delta",
+  "data": {
+    "symbol": "BTCUSDT",
+    "indexPrice": "69070.47",
+    "bid1Price": "69027.60",
+    "bid1Size": "0.466"
+  },
+  "cs": 530383180433,
+  "ts": 1771012576892
+}

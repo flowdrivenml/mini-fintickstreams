@@ -84,27 +84,6 @@ params = { symbol = "<symbol>", limit = 1 }
 interval_seconds = 1000
 method = "GET"
 
-# [api.top_traders_accounts]
-# endpoint = "/futures/data/topLongShortPositionRatio"
-# weight = 1
-# params = { symbol = "<symbol>", period = "5m", limit = 1 }
-# interval_seconds = 600
-# method = "GET"
-#
-# [api.top_traders_positions]
-# endpoint = "/futures/data/topLongShortAccountRatio"
-# weight = 1
-# params = { symbol = "<symbol>", period = "5m", limit = 1 }
-# interval_seconds = 600
-# method = "GET"
-#
-# [api.global_traders_accounts]
-# endpoint = "/futures/data/globalLongShortAccountRatio"
-# weight = 1
-# params = { symbol = "<symbol>", period = "5m", limit = 1 }
-# interval_seconds = 600
-# method = "GET"
-
 # --------------------------------------------------
 # WebSocket streams
 # --------------------------------------------------

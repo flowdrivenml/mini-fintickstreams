@@ -5,7 +5,7 @@ use axum::{
 
 use crate::app::AppRuntime;
 
-use super::handlers::{health, instruments_axum, knobs, limiters, streams};
+use super::handlers::{health, instruments_axum, knobs, limiters, streams, ui};
 
 pub fn build_router(app: AppRuntime) -> Router {
     Router::new()
@@ -54,6 +54,25 @@ pub fn build_router(app: AppRuntime) -> Router {
         // Limiters (NEW)
         // -----------------------
         .route("/limiters", get(limiters::get_limiters))
+        .route("/ui", get(ui::index))
+        .route("/ui/health", get(ui::health_panel))
+        .route("/ui/streams/table", get(ui::streams_table))
+        .route("/ui/streams/start", post(ui::streams_start))
+        .route("/ui/streams/stop", post(ui::streams_stop))
+        .route(
+            "/ui/streams/{exchange}/{symbol}/{kind}/{transport}/knobs",
+            get(ui::knobs_panel),
+        )
+        .route(
+            "/ui/streams/{exchange}/{symbol}/{kind}/{transport}/knobs",
+            post(ui::knobs_save),
+        )
+        .route("/ui/limiters", get(ui::limiters_panel))
+        .route("/ui/instruments", get(ui::instruments_page)) // optional small page/fragment
+        .route("/ui/instruments/refresh", post(ui::instruments_refresh))
+        .route("/ui/instruments/exists", post(ui::instruments_exists))
+        .route("/ui/instruments/list", get(ui::instruments_list))
+        .route("/ui/streams/capabilities", get(ui::capabilities_panel))
         // ✅ ALWAYS last
         .with_state(app)
 }

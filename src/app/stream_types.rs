@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 pub enum ExchangeId {
     BinanceLinear,
     HyperliquidPerp,
+    BybitLinear,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize, Serialize)]

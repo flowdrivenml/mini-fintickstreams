@@ -24,6 +24,11 @@ use crate::ingest::datamap::sources::hyperliquid_perp::types::{
     HyperliquidPerpWsDepthUpdate, HyperliquidPerpWsOIFundingUpdate, HyperliquidPerpWsTrade,
 };
 
+use crate::ingest::datamap::sources::bybit_linear::types::{
+    BybitLinearWsDepthUpdate, BybitLinearWsLiquidation, BybitLinearWsOIFundingUpdate,
+    BybitLinearWsTrade,
+};
+
 fn mk_ctx_btc() -> Ctx {
     let mut ctx = Ctx::new();
     ctx.insert("symbol".to_string(), "btcusdt".to_string()); // Binance stream templates
@@ -495,6 +500,211 @@ async fn ws_hyperliquid_oi_funding_print_first_50() -> AppResult<()> {
                     Ok(())
                 })
             },
+            Some(&mut hook),
+            None,
+        )
+        .await;
+
+    match res {
+        Err(e) if is_test_done(&e) => Ok(()),
+        other => other,
+    }
+}
+
+fn mk_ctx_bybit_btc() -> Ctx {
+    let mut ctx = Ctx::new();
+    // Bybit stream templates use uppercase symbol in our config ("<symbol>")
+    ctx.insert("symbol".to_string(), "BTCUSDT".to_string());
+    ctx.insert("category".to_string(), "linear".to_string());
+    ctx
+}
+
+/// Returns true if the json looks like a Bybit WS message for the given topic prefix.
+/// Bybit payload shape:
+/// - {"topic":"publicTrade.BTCUSDT", ...}
+/// - {"topic":"orderbook.1000.BTCUSDT", ...}
+/// - {"topic":"tickers.BTCUSDT", ...}
+/// - {"topic":"allLiquidation.BTCUSDT", ...}
+fn is_bybit_topic_prefix(v: &JsonValue, prefix: &str) -> bool {
+    v.get("topic")
+        .and_then(|x| x.as_str())
+        .map(|t| t.starts_with(prefix))
+        == Some(true)
+}
+
+#[tokio::test]
+async fn ws_bybit_depth_update_deserializes_10() -> AppResult<()> {
+    crate::telemetry::init_for_tests();
+
+    let appcfg = load_app_config(false, 0)?;
+    let ex = ExchangeConfigs::new(&appcfg, false, 0)?;
+    let cfg = ex
+        .bybit_linear
+        .as_ref()
+        .expect("bybit_linear config must exist");
+
+    let stream = cfg
+        .ws
+        .get("depth_update")
+        .expect("missing [ws.depth_update] in bybit config");
+
+    let client = WsClient::new("bybit_linear", cfg.clone(), None, None);
+    let ctx = mk_ctx_bybit_btc();
+
+    let mut hook: WsTestHook = WsTestHook {
+        max_reconnect_attempts: Some(5),
+        ..Default::default()
+    };
+
+    let res = client
+        .run_stream(
+            None,
+            stream,
+            ctx,
+            stop_after_n_typed_messages::<BybitLinearWsDepthUpdate>(
+                "bybit.depth_update",
+                10,
+                |v| is_bybit_topic_prefix(v, "orderbook."),
+            )
+            .await,
+            Some(&mut hook),
+            None,
+        )
+        .await;
+
+    match res {
+        Err(e) if is_test_done(&e) => Ok(()),
+        other => other,
+    }
+}
+
+#[tokio::test]
+async fn ws_bybit_trades_deserializes_10() -> AppResult<()> {
+    crate::telemetry::init_for_tests();
+
+    let appcfg = load_app_config(false, 0)?;
+    let ex = ExchangeConfigs::new(&appcfg, false, 0)?;
+    let cfg = ex
+        .bybit_linear
+        .as_ref()
+        .expect("bybit_linear config must exist");
+
+    let stream = cfg
+        .ws
+        .get("trades")
+        .expect("missing [ws.trades] in bybit config");
+
+    let client = WsClient::new("bybit_linear", cfg.clone(), None, None);
+    let ctx = mk_ctx_bybit_btc();
+
+    let mut hook: WsTestHook = WsTestHook {
+        max_reconnect_attempts: Some(5),
+        ..Default::default()
+    };
+
+    let res = client
+        .run_stream(
+            None,
+            stream,
+            ctx,
+            stop_after_n_typed_messages::<BybitLinearWsTrade>("bybit.trades", 10, |v| {
+                is_bybit_topic_prefix(v, "publicTrade.")
+            })
+            .await,
+            Some(&mut hook),
+            None,
+        )
+        .await;
+
+    match res {
+        Err(e) if is_test_done(&e) => Ok(()),
+        other => other,
+    }
+}
+
+#[tokio::test]
+async fn ws_bybit_oi_funding_deserializes_10() -> AppResult<()> {
+    crate::telemetry::init_for_tests();
+
+    let appcfg = load_app_config(false, 0)?;
+    let ex = ExchangeConfigs::new(&appcfg, false, 0)?;
+    let cfg = ex
+        .bybit_linear
+        .as_ref()
+        .expect("bybit_linear config must exist");
+
+    let stream = cfg
+        .ws
+        .get("oi_funding")
+        .expect("missing [ws.oi_funding] in bybit config");
+
+    let client = WsClient::new("bybit_linear", cfg.clone(), None, None);
+    let ctx = mk_ctx_bybit_btc();
+
+    let mut hook: WsTestHook = WsTestHook {
+        max_reconnect_attempts: Some(5),
+        ..Default::default()
+    };
+
+    let res = client
+        .run_stream(
+            None,
+            stream,
+            ctx,
+            stop_after_n_typed_messages::<BybitLinearWsOIFundingUpdate>(
+                "bybit.oi_funding",
+                10,
+                |v| is_bybit_topic_prefix(v, "tickers."),
+            )
+            .await,
+            Some(&mut hook),
+            None,
+        )
+        .await;
+
+    match res {
+        Err(e) if is_test_done(&e) => Ok(()),
+        other => other,
+    }
+}
+
+// Liquidations are sporadic; if you want, reduce n_ok to 1 or 2.
+// This test keeps 10 like your Binance test; it may run a long time in calm markets.
+#[tokio::test]
+async fn ws_bybit_liquidations_deserializes_10() -> AppResult<()> {
+    crate::telemetry::init_for_tests();
+
+    let appcfg = load_app_config(false, 0)?;
+    let ex = ExchangeConfigs::new(&appcfg, false, 0)?;
+    let cfg = ex
+        .bybit_linear
+        .as_ref()
+        .expect("bybit_linear config must exist");
+
+    let stream = cfg
+        .ws
+        .get("liquidations")
+        .expect("missing [ws.liquidations] in bybit config");
+
+    let client = WsClient::new("bybit_linear", cfg.clone(), None, None);
+    let ctx = mk_ctx_bybit_btc();
+
+    let mut hook: WsTestHook = WsTestHook {
+        max_reconnect_attempts: Some(5),
+        ..Default::default()
+    };
+
+    let res = client
+        .run_stream(
+            None,
+            stream,
+            ctx,
+            stop_after_n_typed_messages::<BybitLinearWsLiquidation>(
+                "bybit.liquidations",
+                10,
+                |v| is_bybit_topic_prefix(v, "allLiquidation."),
+            )
+            .await,
             Some(&mut hook),
             None,
         )
