@@ -38,7 +38,9 @@ spec:
             - name: MINI_FINTICKSTREAMS_EXCHANGE_CONFIG_PATH_1_BINANCE_LINEAR
               value: /etc/mini-fintickstreams/binance_linear.toml
             - name: MINI_FINTICKSTREAMS_EXCHANGE_CONFIG_PATH_1_HYPERLIQUID_PERP
-              value: /etc/mini-fintickstreams/hyperliquid_perp.toml
+              value: /etc/mini-fintickstreams/hyperliquid_perp.toml 
+            - name: MINI_FINTICKSTREAMS_EXCHANGE_CONFIG_PATH_1_BYBIT_LINEAR
+              value: /etc/mini-fintickstreams/bybit_linear.toml
 
           envFrom:
             - secretRef:

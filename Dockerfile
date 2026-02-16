@@ -39,7 +39,8 @@ ENV MINI_FINTICKSTREAMS_API_CONFIG_PATH_1=/etc/mini-fintickstreams/api.toml \
     MINI_FINTICKSTREAMS_PROMETHEUS_CONFIG_PATH_1=/etc/mini-fintickstreams/prometheus.toml \
     MINI_FINTICKSTREAMS_REDIS_CONFIG_PATH_1=/etc/mini-fintickstreams/redis.toml \
     MINI_FINTICKSTREAMS_EXCHANGE_CONFIG_PATH_1_BINANCE_LINEAR=/etc/mini-fintickstreams/binance_linear.toml \
-    MINI_FINTICKSTREAMS_EXCHANGE_CONFIG_PATH_1_HYPERLIQUID_PERP=/etc/mini-fintickstreams/hyperliquid_perp.toml
+    MINI_FINTICKSTREAMS_EXCHANGE_CONFIG_PATH_1_HYPERLIQUID_PERP=/etc/mini-fintickstreams/hyperliquid_perp.toml \
+    MINI_FINTICKSTREAMS_EXCHANGE_CONFIG_PATH_1_BYBIT_LINEAR=/etc/mini-fintickstreams/bybit_linear.toml
 
 WORKDIR /app
 USER 10001
