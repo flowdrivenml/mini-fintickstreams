@@ -21,7 +21,7 @@ Zero CLI wrestling. Manage your entire data pipeline from a built-in Axum web in
 </div>
 
 <p align="center">
-  <img src="docs/ui_dashboard.png" alt="Dashboard" width="70%" />
+  <img src="docs/ui_dashboard.png" alt="Dashboard" width="100%" />
   <br/>
   <em>Left: Live stream monitoring | Right: Real-time per-stream "knobs" & limiters</em>
 </p>
